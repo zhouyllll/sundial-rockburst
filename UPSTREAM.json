@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/thuml/Sundial",
+  "commit": "3ef03b8c3804f64a506e57101a173470040aaece",
+  "local_path": "vendor/Sundial",
+  "model_repository": "https://huggingface.co/thuml/sundial-base-128m",
+  "model_weights_downloaded": false,
+  "note": "GitHub仓库提供说明与示例；模型权重及实际自定义模型代码由Hugging Face提供。基础版不会隐式下载。"
+}

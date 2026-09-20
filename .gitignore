@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+artifacts/
+data/
+models/
+cache/
+# Upstream source is a pinned Git submodule; model weights stay local.
+*.bin
+*.npy
+*.npz
+*.safetensors
+*.pt
+*.pth
+.env
+.env.*
+!.env.example
+*.pem
+*.key

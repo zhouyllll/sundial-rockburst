@@ -1,0 +1,3 @@
+[submodule "vendor/Sundial"]
+	path = vendor/Sundial
+	url = https://github.com/thuml/Sundial.git
