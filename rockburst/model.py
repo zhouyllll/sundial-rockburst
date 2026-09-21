@@ -66,14 +66,15 @@ def average_precision(y, p):
     return float(np.sum(np.diff(np.r_[0., recall]) * precision))
 
 
-def evaluate(x, y, mask, times, event_ids, model, threshold):
+def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.):
     p = probabilities(x, model)
     truth = np.cumsum(y, axis=1) > 0
     results = {}
     for j, horizon in enumerate([5, 10, 30]):
         target, scores = truth[:, j], p[:, j]
         active = scores >= threshold
-        starts = np.flatnonzero(active & np.r_[True, (~active[:-1]) | (np.diff(times) != 60)])
+        starts = np.flatnonzero(active & np.r_[True, (~active[:-1]) |
+                    ~np.isclose(np.diff(times), refresh_seconds, atol=.02)])
         matched = {str(event_ids[k]) for k in starts if target[k] and event_ids[k]}
         eligible_events = {str(v) for v in event_ids[target] if v}
         false_alarms = sum(not target[k] for k in starts)
@@ -82,14 +83,15 @@ def evaluate(x, y, mask, times, event_ids, model, threshold):
             brier=float(np.mean((scores - target) ** 2)),
             log_loss=float(-np.mean(target * np.log(clipped) + (1 - target) * np.log1p(-clipped))),
             average_precision=average_precision(target, scores),
-            positive_minutes=int(target.sum()), mean_probability=float(scores.mean()),
+            positive_samples=int(target.sum()), mean_probability=float(scores.mean()),
             alarm_time_fraction=float(active.mean()), alarm_episodes=len(starts),
             false_alarm_episodes=int(false_alarms),
-            false_alarms_per_24h_evaluated=float(false_alarms / (len(times) / 1440)),
+            false_alarms_per_24h_evaluated=float(false_alarms / (len(times) * refresh_seconds / 86400)),
             eligible_events=len(eligible_events), detected_events=len(matched),
             event_recall=len(matched) / len(eligible_events) if eligible_events else None,
         )
-    return dict(samples=len(x), evaluated_hours=len(x) / 60,
+    return dict(samples=len(x), evaluated_hours=len(x) * refresh_seconds / 3600,
+                nominal_step_seconds=refresh_seconds,
                 threshold=threshold, horizons=results), p
 
 
@@ -100,6 +102,7 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
         x, y, mask, times = (pack[k] for k in ["x", "y", "mask", "times"])
         event_ids, groups = pack["event_ids"], pack["groups"]
         metadata = json.loads(str(pack["metadata"]))
+    refresh = metadata.get("refresh_seconds", 60.)
     if metadata["feature_names"] != FEATURE_NAMES:
         raise ValueError("数据集特征版本不匹配")
     if not np.all(np.diff(times) > 0):
@@ -121,7 +124,7 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
     candidates = []
     for ridge in ridges:
         model = fit_hazard(x[tr], y[tr], mask[tr], float(ridge))
-        validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model, threshold)
+        validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model, threshold, refresh)
         score = np.mean([v["brier"] for v in validation["horizons"].values()])
         candidates.append((float(score), model))
     _, model = min(candidates, key=lambda item: item[0])
@@ -137,11 +140,11 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
                   selected_ridge=model["ridge"], candidates=[dict(ridge=m["ridge"], validation_brier=s)
                                                             for s, m in candidates],
                   purged_samples=int(np.sum(~(tr | va | te))), splits={},
-                  alarm_definition="threshold crossing; consecutive active minutes merge; a new alarm must precede the next event within its horizon",
-                  limitation="实验性结果；相邻分钟相关。未进行独立概率校准或置信区间估计。测试只评估有完整输入的分钟。")
+                  alarm_definition="threshold crossing; consecutive active samples merge; a new alarm must precede the next event within its horizon",
+                  limitation="实验性结果；相邻样本相关。未进行独立概率校准或置信区间估计。测试只评估有完整输入的时刻；时长按名义步长估算。")
     for name, selected in splits.items():
         metrics, p = evaluate(x[selected], y[selected], mask[selected], times[selected],
-                              event_ids[selected], model, threshold)
+                              event_ids[selected], model, threshold, refresh)
         metrics.update(independent_events=len(set(event_ids[selected]) - {""}),
                        independent_groups=len(group_sets[name]),
                        start=iso(times[selected][0]), end=iso(times[selected][-1]))

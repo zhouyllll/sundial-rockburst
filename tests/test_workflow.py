@@ -45,7 +45,7 @@ class WorkflowTests(unittest.TestCase):
         args = parser().parse_args(["run", "--continuous-dir", "continuous",
                                     "--microseismic-dir", "micro", "--labels", "rockbursts.txt"])
         self.assertEqual(args.backend, "sundial")
-        self.assertEqual(args.history_minutes, 60)
+        self.assertEqual(args.history_minutes, 30)
         self.assertFalse(hasattr(args, "coverage"))
 
 

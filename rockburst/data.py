@@ -32,6 +32,25 @@ def merge_intervals(intervals):
 
 
 class Inputs:
+    @classmethod
+    def from_stream(cls, continuous_rows, event_rows, zone, now):
+        """Build an inference view of the bounded buffers; no future labels needed."""
+        obj = cls.__new__(cls)
+        obj.zone = zone
+        signatures = {r["preprocessing_id"] for r in continuous_rows}
+        if len(signatures) != 1:
+            raise Unavailable("continuous_history_incomplete")
+        obj.signature = next(iter(signatures))
+        obj.blocks = {round(timestamp(r["end_time"])): cls._feature(r) for r in continuous_rows}
+        if any(r["preprocessing_id"] != obj.signature for r in event_rows):
+            raise ValueError("微震与连续特征的采集配置不一致")
+        obj.events = sorted((cls._feature(r) for r in event_rows), key=lambda r: r["start"])
+        obj.event_starts = [r["start"] for r in obj.events]
+        obj.ends = sorted(obj.blocks)
+        obj.coverage = {"event_archive_complete": [(now - 86400, now)], "rockburst_record_complete": []}
+        obj.bursts, obj.onsets = [], []
+        return obj
+
     def __init__(self, continuous, events, coverage, zone, rockbursts=None):
         self.zone = zone
         self.blocks = {}
@@ -160,8 +179,6 @@ class Inputs:
                    "continuous_blocks": len(blocks), "microseismic_count_24h": len(past)}
 
     def label(self, now):
-        if not self.covered(now, now + 1800, "rockburst_record_complete"):
-            raise Unavailable("future_labels_incomplete")
         if any(r["onset"] <= now <= r["end"] for r in self.bursts):
             raise Unavailable("rockburst_in_progress")
         idx = bisect_right(self.onsets, now)
@@ -171,19 +188,32 @@ class Inputs:
             burst = self.bursts[idx]
             delay = burst["onset"] - now
             if delay <= 1800:
+                # A known first event determines all cumulative targets, even
+                # when the saved waveform stops at that event.
+                if not self.covered(now, burst["onset"], "rockburst_record_complete"):
+                    raise Unavailable("future_labels_incomplete")
                 j = int(np.searchsorted(HORIZONS, delay, side="left"))
                 y[j] = 1
                 mask[j + 1:] = False
                 event_id, group_id = burst["event_id"], burst["group_id"]
+                return y, mask, event_id, group_id
+        if not self.covered(now, now + 1800, "rockburst_record_complete"):
+            raise Unavailable("future_labels_incomplete")
         return y, mask, event_id, group_id
 
 
-def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, max_lag_seconds=60):
-    if start >= end or start % 60 or end % 60:
+def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, max_lag_seconds=60,
+                  prediction_times=None):
+    if start >= end:
+        raise ValueError("start 必须早于 end")
+    if prediction_times is None and (start % 60 or end % 60):
         raise ValueError("start/end 必须递增且对齐整分钟；end为不包含的右端点")
+    by_file = prediction_times is not None
+    schedule = (sorted({float(t) for t in prediction_times if start <= t < end}) if by_file
+                else list(range(round(start), round(end), 60)))
     xs, ys, masks, times, event_ids, groups = [], [], [], [], [], []
     skipped = Counter()
-    for i, now in enumerate(range(round(start), round(end), 60)):
+    for i, now in enumerate(schedule):
         try:
             y, mask, event_id, group = inputs.label(now)
             x, _ = inputs.sample(now, forecaster, history_minutes, max_lag_seconds)
@@ -203,13 +233,14 @@ def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, ma
     metadata = dict(schema=1, feature_names=FEATURE_NAMES, zone_id=inputs.zone,
                     preprocessing_id=inputs.signature, history_minutes=history_minutes,
                     max_lag_seconds=max_lag_seconds, forecast=forecaster.identity,
-                    start=iso(start), end=iso(end), refresh_seconds=60)
+                    start=iso(start), end=iso(end), sample_step="bin_file" if by_file else "minute",
+                    refresh_seconds=float(np.median(np.diff(schedule))) if len(schedule) > 1 else 30.)
     from pathlib import Path
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as stream:
         np.savez_compressed(stream, x=np.stack(xs), y=np.stack(ys), mask=np.stack(masks),
-                            times=np.array(times, dtype=np.int64), event_ids=np.array(event_ids),
+                            times=np.array(times, dtype=np.float64), event_ids=np.array(event_ids),
                             groups=np.array(groups), metadata=json.dumps(metadata))
     report = dict(samples=len(xs), skipped=dict(skipped),
                   independent_events=len(set(event_ids) - {""}),

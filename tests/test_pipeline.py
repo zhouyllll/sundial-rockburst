@@ -122,6 +122,15 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(Unavailable, "rockburst_in_progress"):
             self.inputs().label(self.now)
 
+    def test_known_burst_at_recording_end_keeps_pre_event_labels(self):
+        onset = self.now + 480
+        self.coverage[0]["end_time"] = iso(onset)
+        self.bursts = [dict(event_id="b", zone_id="z", onset_time=iso(onset),
+                            end_time=iso(onset), group_id="g")]
+        y, mask, _, _ = self.inputs().label(self.now)
+        np.testing.assert_array_equal(y, [0, 1, 0])
+        np.testing.assert_array_equal(mask, [True, True, False])
+
     def test_duplicate_events_rejected(self):
         event = self.event(self.now - 100, self.now - 70)
         self.events = [event, event.copy()]

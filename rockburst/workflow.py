@@ -7,7 +7,6 @@ are complete. CSVs are internal artifacts, not forms for the user to fill in.
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
-import math
 import re
 
 import numpy as np
@@ -82,7 +81,7 @@ def read_burst_times(path, zone, timezone):
 
 def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sundial",
                  model_path=None, device="cpu", samples=20, cache=None,
-                 zone="zone_A", timezone="Asia/Shanghai", history_minutes=60,
+                 zone="zone_A", timezone="Asia/Shanghai", history_minutes=30,
                  monitor="all", ridge=1., threshold=.5):
     root = Path(output)
     root.mkdir(parents=True, exist_ok=True)
@@ -115,10 +114,11 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
     data = Inputs(root / "continuous.csv", root / "events.csv", generated / "coverage.csv",
                   zone, generated / "rockbursts.csv")
     forecast = Forecaster(backend, model_path, device, samples, cache or root / "cache")
-    start = math.ceil((first + history_minutes * 60) / 60) * 60
-    end = math.floor((last - 1800) / 60) * 60 + 60
+    start = first + history_minutes * 60
+    end = last + 1e-6
     print(f"[3/5] {backend}推理，融合两路特征并建立5/10/30分钟标签", flush=True)
-    dataset_report = build_dataset(data, forecast, start, end, root / "dataset.npz", history_minutes)
+    dataset_report = build_dataset(data, forecast, start, end, root / "dataset.npz", history_minutes,
+                                   prediction_times=[local_time(r["available_time"], timezone) for r in continuous])
     with np.load(root / "dataset.npz", allow_pickle=False) as pack:
         times = pack["times"]
     train_end = float(times[min(int(len(times) * .7), len(times) - 1)])
@@ -130,7 +130,7 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
     print("[5/5] 保存模型、测试报告和最新一次预测", flush=True)
     from .io import read_json
     model = read_json(root / "run/model.json")
-    now = math.floor(last / 60) * 60
+    now = last
     x, quality = data.sample(now, forecast, history_minutes)
     p = probabilities(x[None], model)[0]
     prediction = dict(status="ok", time=iso(now), zone_id=zone, p_5min=float(p[0]),

@@ -39,11 +39,21 @@ def parser():
     p.add_argument("--output", default="artifacts/experiment")
     p.add_argument("--zone", default="zone_A")
     p.add_argument("--timezone", default="Asia/Shanghai")
-    p.add_argument("--history-minutes", type=int, choices=[30, 60], default=60)
+    p.add_argument("--history-minutes", type=int, choices=[30, 60], default=30)
     p.add_argument("--monitor", default="all")
     p.add_argument("--ridge", type=float, default=1.)
     p.add_argument("--threshold", type=float, default=.5)
     add_forecaster(p, default="sundial")
+    p = commands.add_parser("stream", help="按bin时间顺序流式回放，每到一个完整bin预测一次")
+    p.add_argument("--continuous-dir", required=True)
+    p.add_argument("--microseismic-dir", required=True)
+    p.add_argument("--model", required=True, help="30分钟窗口训练的run/model.json")
+    p.add_argument("--model-path", help="本地Sundial权重目录；backend自动沿用训练模型")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--timezone", default="Asia/Shanghai")
+    p.add_argument("--monitor", default="all")
+    p.add_argument("--output", default="artifacts/stream")
+    p.add_argument("--quiet", action="store_true", help="不逐行打印，仍立即写入JSONL和CSV")
     p = commands.add_parser("demo-raw", help="生成合成bin并跑通目录读取到训练的完整主流程")
     p.add_argument("--output", default="artifacts/demo_raw")
     p = commands.add_parser("extract", help="从 bin manifest 流式提取特征")
@@ -58,7 +68,7 @@ def parser():
     add_forecaster(p)
     p.add_argument("--start", required=True)
     p.add_argument("--end", required=True, help="不包含的右端点")
-    p.add_argument("--history-minutes", type=int, choices=[30, 60], default=60)
+    p.add_argument("--history-minutes", type=int, choices=[30, 60], default=30)
     p.add_argument("--max-lag-seconds", type=int, choices=range(0, 61), default=60,
                    metavar="0..60", help="允许最新完整波形块延迟，默认最多60秒")
     p.add_argument("--output", required=True)
@@ -93,6 +103,11 @@ def main(argv=None):
                                   args.output, args.backend, args.model_path, args.device,
                                   args.samples, args.cache, args.zone, args.timezone,
                                   args.history_minutes, args.monitor, args.ridge, args.threshold)
+        elif args.command == "stream":
+            from .stream import replay_stream
+            result = replay_stream(args.continuous_dir, args.microseismic_dir, args.model,
+                                   args.output, args.model_path, args.device, args.timezone,
+                                   args.monitor, args.quiet)
         elif args.command == "demo-raw":
             from .workflow import raw_demo
             result = raw_demo(args.output)
