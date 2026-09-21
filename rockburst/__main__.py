@@ -32,6 +32,20 @@ def add_forecaster(parser, default=None):
 def parser():
     root = argparse.ArgumentParser(description="连续DAS + 24小时微震片段的实验性岩爆预测基础版")
     commands = root.add_subparsers(dest="command", required=True)
+    p = commands.add_parser("run", help="主入口：两个bin目录+岩爆时间清单，一次完成读取到训练")
+    p.add_argument("--continuous-dir", required=True)
+    p.add_argument("--microseismic-dir", required=True)
+    p.add_argument("--labels", required=True, help="岩爆时间txt，每行一个时间；也支持含onset_time的CSV")
+    p.add_argument("--output", default="artifacts/experiment")
+    p.add_argument("--zone", default="zone_A")
+    p.add_argument("--timezone", default="Asia/Shanghai")
+    p.add_argument("--history-minutes", type=int, choices=[30, 60], default=60)
+    p.add_argument("--monitor", default="all")
+    p.add_argument("--ridge", type=float, default=1.)
+    p.add_argument("--threshold", type=float, default=.5)
+    add_forecaster(p, default="sundial")
+    p = commands.add_parser("demo-raw", help="生成合成bin并跑通目录读取到训练的完整主流程")
+    p.add_argument("--output", default="artifacts/demo_raw")
     p = commands.add_parser("extract", help="从 bin manifest 流式提取特征")
     p.add_argument("kind", choices=["continuous", "events"])
     p.add_argument("--manifest", required=True)
@@ -73,7 +87,16 @@ def make_forecaster(args):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
-        if args.command == "extract":
+        if args.command == "run":
+            from .workflow import run_workflow
+            result = run_workflow(args.continuous_dir, args.microseismic_dir, args.labels,
+                                  args.output, args.backend, args.model_path, args.device,
+                                  args.samples, args.cache, args.zone, args.timezone,
+                                  args.history_minutes, args.monitor, args.ridge, args.threshold)
+        elif args.command == "demo-raw":
+            from .workflow import raw_demo
+            result = raw_demo(args.output)
+        elif args.command == "extract":
             result = extract(args.manifest, args.output, args.kind, args.monitor,
                              args.band_low, args.band_high)
         elif args.command == "demo":
