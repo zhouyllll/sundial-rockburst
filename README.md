@@ -15,7 +15,7 @@
 
 - Sundial使用已有预训练权重，只推理，不微调。
 - 训练的是后面的9参数岩爆概率模型。
-- 微震片段由你已有的识别程序提供，本项目不重新训练识别器。
+- 微震片段由已有的识别程序提供，本项目不重新训练识别器。
 - `run`一次执行索引、提取特征、Sundial推理、标签构建、训练、测试和最新一次预测。
 - `stream`使用训练好的模型按文件时间流式回放，一次输出一条预测，不需要岩爆标签。
 - 当前尚未用真实岩爆训练。`persistence`是无权重的流程验证基线，不是Sundial。
@@ -33,9 +33,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-本机已有目录是`/home/dministrator/linux/yb/sundial_rockburst`，直接进入即可。以后重新打开终端，先进入项目并执行`source .venv/bin/activate`。
-
-若克隆时漏了子模块，执行`git submodule update --init --recursive`。本项目可以独立运行，不需要原有`mic_v3.py`或GUI。
+本项目可以独立运行，不需要原有GUI。
 
 ## 3. 没有真实数据，先跑完整演示
 
@@ -75,7 +73,7 @@ python -m unittest discover -s tests -v
 data/
   continuous/          连续采集的bin
   microseismic/        外部程序检出的微震片段bin
-  rockbursts.txt        已确认的真实岩爆时间
+  rockbursts.txt       已确认的真实岩爆时间
 ```
 
 ### bin格式已经固定，无需逐文件填写
@@ -106,7 +104,7 @@ data/
 2026-06-25 22:20:00
 ```
 
-上面只是格式示例，请替换为自己的25次真实岩爆。微震文件名不能替代岩爆标签。
+上面只是格式示例，请替换为真实岩爆。微震文件名不能替代岩爆标签。
 
 默认时区为北京时间`Asia/Shanghai`；也支持`2026-06-21T15:30:00+08:00`。已有包含`onset_time`列的CSV也可以直接作为`--labels`。
 
