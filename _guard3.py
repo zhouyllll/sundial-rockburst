@@ -4,15 +4,15 @@ import subprocess, sys, time
 from pathlib import Path
 
 REPO = Path(r"G:\1A岩爆预测\sundial-rockburst")
-OUT = Path(r"G:\1A岩爆预测\sundial-rockburst\artifacts\experiment_01")
+OUT = Path(r"G:\1A岩爆预测\sundial-rockburst\artifacts\experiment_02_causal_fix")
 GUARD = REPO / "guard_schtask.log"
-RUN_LOG = REPO / "train_run4.log"
-ERR_LOG = REPO / "train_err4.log"
+RUN_LOG = REPO / "train_run5.log"
+ERR_LOG = REPO / "train_err5.log"
 
 cmd = [
     sys.executable, "-u", "-m", "rockburst", "run",
     "--continuous-dir", r"G:\1A岩爆预测\岩爆数据集",
-    "--labels", r"G:\1A岩爆预测\rockbursts_full.csv",
+    "--labels", r"G:\1A岩爆预测\label.txt",
     "--model-path", str(REPO / "models" / "sundial-base-128m"),
     "--monitor", "16-35",
     "--device", "cuda",

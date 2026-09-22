@@ -65,6 +65,8 @@ class StreamingTests(unittest.TestCase):
             microseismic_enabled = False
 
             def label(self, now):
+                if now == self.positive_time:
+                    return np.array([1., 0., 0.]), np.array([True, False, False]), "burst-a", "event-group-a"
                 return np.zeros(3), np.ones(3, dtype=bool), "", ""
 
             def sample(self, now, forecast, history_minutes, max_lag):
@@ -74,12 +76,17 @@ class StreamingTests(unittest.TestCase):
             path = Path(folder) / "dataset.npz"
             start = timestamp("2026-01-01T00:30:00.846Z")
             schedule = [start, start + 30, start + 60]
-            build_dataset(Fixture(), Forecaster(), start, start + 61, path, 30,
-                          prediction_times=schedule)
+            fixture = Fixture()
+            fixture.positive_time = start + 30
+            build_dataset(fixture, Forecaster(), start, start + 61, path, 30,
+                          prediction_times=schedule,
+                          source_groups=[(start - 1, start + 61, "recording-folder-a")])
             with np.load(path, allow_pickle=False) as pack:
                 np.testing.assert_array_equal(pack["times"], schedule)
+                np.testing.assert_array_equal(pack["groups"], ["recording-folder-a"] * 3)
                 meta = json.loads(str(pack["metadata"]))
             self.assertEqual(meta["sample_step"], "bin_file")
+            self.assertEqual(meta["grouping_unit"], "recording_folder_component")
             self.assertEqual(meta["refresh_seconds"], 30)
             self.assertFalse(meta["microseismic_enabled"])
 

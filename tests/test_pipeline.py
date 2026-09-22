@@ -91,6 +91,14 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(quality["continuous_lag_seconds"], 10)
         self.assertAlmostEqual(x[0, 0], 0.)
 
+    def test_historical_unavailable_waveform_block_is_rejected(self):
+        # The newest block may be lagged and is handled by the cutoff above,
+        # but an unavailable block inside the selected history cannot be used.
+        historical = self.rows[-20]
+        historical["available_time"] = iso(self.now + 10)
+        with self.assertRaisesRegex(Unavailable, "continuous_history_incomplete"):
+            self.inputs().sample(self.now, Forecaster())
+
     def test_missing_continuous_is_not_zero_filled(self):
         self.rows.pop(200)
         with self.assertRaisesRegex(Unavailable, "continuous_history_incomplete"):

@@ -3,8 +3,9 @@ import tempfile
 import unittest
 
 from rockburst.__main__ import parser
-from rockburst.io import local_path, timestamp
-from rockburst.workflow import read_burst_times, scan_bins
+from rockburst.io import iso, local_path, timestamp
+from rockburst.workflow import (grouped_time_boundaries, read_burst_times,
+                                 recording_group_intervals, scan_bins)
 
 
 class WorkflowTests(unittest.TestCase):
@@ -36,6 +37,56 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(row["event_end_time"], row["available_time"])
             self.assertEqual(row["event_id"], "clip-000001")
 
+    def test_recording_groups_keep_folder_samples_together_and_merge_overlapping_histories(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "dataset"
+            rows = []
+            cases = [("event_a", "2026-06-01T00:00:00+00:00", 7200),
+                     ("event_b", "2026-06-01T02:10:00+00:00", 3600),
+                     ("event_c", "2026-06-01T05:00:00+00:00", 3600)]
+            for name, start_text, duration in cases:
+                directory = root / name
+                directory.mkdir(parents=True)
+                path = directory / "placeholder.bin"
+                path.touch()
+                start = timestamp(start_text)
+                rows.append(dict(file_path=str(path), start_time=iso(start),
+                                 available_time=iso(start + duration)))
+            intervals = recording_group_intervals(rows, root, "UTC", 30)
+            self.assertEqual(len(intervals), 2)
+            self.assertTrue(intervals[0][2].startswith("recording-"))
+            self.assertTrue(intervals[1][2].startswith("folder-"))
+
+    def test_flat_continuous_directory_has_no_folder_holdout_group(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "data.bin"
+            path.touch()
+            row = dict(file_path=str(path), start_time="2026-06-01T00:00:00Z",
+                       available_time="2026-06-01T00:00:30Z")
+            self.assertEqual(recording_group_intervals([row], root, "UTC", 30), [])
+
+    def test_grouped_time_boundaries_split_whole_chronological_groups(self):
+        origin = timestamp("2026-06-01T00:00:00Z")
+        times, groups = [], []
+        for i in range(10):
+            start = origin + i * 3 * 3600
+            times.extend(start + j * 60 for j in range(100))
+            groups.extend([f"folder-{i}"] * 100)
+        train_end, validation_end = grouped_time_boundaries(times, groups)
+        labels = []
+        for now in times:
+            labels.append(0 if now + 1800 <= train_end else
+                          1 if now >= train_end and now + 1800 <= validation_end else
+                          2 if now >= validation_end else -1)
+        for group in set(groups):
+            assigned = {labels[i] for i, value in enumerate(groups) if value == group}
+            assigned.discard(-1)
+            self.assertLessEqual(len(assigned), 1, group)
+        self.assertTrue(any(v == 0 for v in labels))
+        self.assertTrue(any(v == 1 for v in labels))
+        self.assertTrue(any(v == 2 for v in labels))
+
     def test_plain_timestamp_list_needs_no_csv(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "rockbursts.txt"
@@ -64,6 +115,7 @@ class WorkflowTests(unittest.TestCase):
             rows = read_burst_times(labels, "zone_A", "Asia/Shanghai", continuous, root)
             by_id = {row["event_id"]: row for row in rows}
             self.assertNotEqual(by_id["rb-0001"]["group_id"], by_id["rb-0002"]["group_id"])
+            self.assertEqual(by_id["rb-0001"]["group_id"], by_id["rb-0003"]["group_id"])
             self.assertEqual(timestamp(by_id["rb-0002"]["end_time"]),
                              timestamp("2026-06-22T00:06:11+08:00"))
             self.assertEqual(timestamp(by_id["rb-0003"]["onset_time"]),

@@ -155,7 +155,7 @@ class Inputs:
             raise Unavailable("continuous_too_old_or_unavailable")
         first = math.ceil((now - history_minutes * 60) / 10) * 10 + 10
         blocks = [self.blocks.get(end) for end in range(first, cutoff + 1, 10)]
-        if not blocks or any(r is None or r["available"] > now + max_lag_seconds for r in blocks):
+        if not blocks or any(r is None or r["available"] > now for r in blocks):
             raise Unavailable("continuous_history_incomplete")
         if len(blocks) < history_minutes * 6 - math.ceil(max_lag_seconds / 10) - 1:
             raise Unavailable("continuous_history_too_short")
@@ -207,7 +207,7 @@ class Inputs:
 
 
 def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, max_lag_seconds=60,
-                  prediction_times=None):
+                  prediction_times=None, source_groups=None):
     if start >= end:
         raise ValueError("start 必须早于 end")
     if prediction_times is None and (start % 60 or end % 60):
@@ -224,12 +224,18 @@ def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, ma
         except Unavailable as exc:
             skipped[str(exc)] += 1
             continue
+        source_matches = [group_id for a, b, group_id in (source_groups or [])
+                          if a - 1e-6 <= now <= b + 1e-6]
+        if len(source_matches) > 1:
+            raise ValueError(f"预测时刻{iso(now)}同时归属多个连续记录分组")
+        if source_groups and not source_matches:
+            raise ValueError(f"预测时刻{iso(now)}未匹配到连续记录分组")
         xs.append(x)
         ys.append(y)
         masks.append(mask)
         times.append(now)
         event_ids.append(event_id)
-        groups.append(group)
+        groups.append(source_matches[0] if source_matches else group)
         if (i + 1) % 100 == 0:
             print(f"已扫描 {i + 1} 个预测时刻，有效 {len(xs)}", flush=True)
     if not xs:
@@ -239,6 +245,7 @@ def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, ma
                     max_lag_seconds=max_lag_seconds, forecast=forecaster.identity,
                     microseismic_enabled=getattr(inputs, "microseismic_enabled", True),
                     start=iso(start), end=iso(end), sample_step="bin_file" if by_file else "minute",
+                    grouping_unit="recording_folder_component" if source_groups else "event_group_or_time",
                     refresh_seconds=float(np.median(np.diff(schedule))) if len(schedule) > 1 else 30.)
     from pathlib import Path
     path = Path(output)

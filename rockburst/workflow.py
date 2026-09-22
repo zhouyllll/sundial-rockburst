@@ -94,6 +94,60 @@ def _folder_windows(continuous_rows, continuous_root, timezone):
     return grouped
 
 
+def recording_group_intervals(continuous_rows, continuous_root, timezone, history_minutes):
+    """Map every prediction time to a recording-folder group, merging sessions
+    whose time ranges overlap, whose model input windows can overlap, or whose
+    30-minute target-label windows can cross a split boundary.
+    """
+    windows = _folder_windows(continuous_rows, continuous_root, timezone)
+    if set(windows) == {"."}:
+        return []  # Flat directories have no recording-folder unit to hold out.
+    ordered = sorted(((bounds[0], bounds[1], folder) for folder, bounds in windows.items()))
+    components = []
+    join_gap = history_minutes * 60 + 1800
+    for start, end, folder in ordered:
+        if components and start <= components[-1]["end"] + join_gap:
+            components[-1]["end"] = max(components[-1]["end"], end)
+            components[-1]["folders"].append(folder)
+        else:
+            components.append({"start": start, "end": end, "folders": [folder]})
+    result = []
+    for component in components:
+        folders = sorted(component["folders"])
+        if len(folders) == 1:
+            group_id = "folder-" + hashlib.sha1(folders[0].encode("utf-8")).hexdigest()[:12]
+        else:
+            signature = "\0".join(folders)
+            group_id = "recording-" + hashlib.sha1(signature.encode("utf-8")).hexdigest()[:12]
+        result.append((component["start"], component["end"], group_id))
+    return result
+
+
+def grouped_time_boundaries(times, groups, train_fraction=.70, validation_fraction=.15):
+    """Choose chronological split boundaries between whole recording groups."""
+    times = np.asarray(times, dtype=np.float64)
+    groups = np.asarray(groups).astype(str)
+    present = sorted(set(groups) - {""}, key=lambda group: float(times[groups == group].min()))
+    if len(present) < 3:
+        return None
+    counts = np.asarray([np.sum(groups == group) for group in present])
+    cumulative = np.cumsum(counts)
+    total = len(times)
+    first_cut = min(range(1, len(present) - 1),
+                    key=lambda cut: abs(cumulative[cut - 1] / total - train_fraction))
+    second_cut = min(range(first_cut + 1, len(present)),
+                     key=lambda cut: abs(cumulative[cut - 1] / total -
+                                         (train_fraction + validation_fraction)))
+    train_groups = present[:first_cut]
+    validation_groups = present[first_cut:second_cut]
+    test_groups = present[second_cut:]
+    train_end = (max(times[groups == train_groups[-1]]) +
+                 min(times[groups == validation_groups[0]])) / 2
+    validation_end = (max(times[groups == validation_groups[-1]]) +
+                      min(times[groups == test_groups[0]])) / 2
+    return float(train_end), float(validation_end)
+
+
 def _resolve_clock_range(start_clock, end_clock, bounds, timezone):
     tz = ZoneInfo(timezone)
     first_day = datetime.fromtimestamp(bounds[0], tz).date() - timedelta(days=1)
@@ -200,15 +254,36 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
     start = first + history_minutes * 60
     end = last + 1e-6
     print(f"[3/5] {backend}推理，融合两路特征并建立5/10/30分钟标签", flush=True)
+    source_groups = recording_group_intervals(continuous, continuous_dir, timezone, history_minutes)
+    has_recording_folders = set(_folder_windows(continuous, continuous_dir, timezone)) != {"."}
+    if has_recording_folders and len(source_groups) < 3:
+        raise ValueError(
+            f"按时间重叠合并后只有{len(source_groups)}个独立记录组，无法划分训练/验证/测试；"
+            "请增加相互独立的事件文件夹或正常监测记录。"
+        )
     dataset_report = build_dataset(data, forecast, start, end, root / "dataset.npz", history_minutes,
-                                   prediction_times=[local_time(r["available_time"], timezone) for r in continuous])
+                                   prediction_times=[local_time(r["available_time"], timezone) for r in continuous],
+                                   source_groups=source_groups)
     with np.load(root / "dataset.npz", allow_pickle=False) as pack:
-        times = pack["times"]
-    train_end = float(times[min(int(len(times) * .7), len(times) - 1)])
-    validation_end = float(times[min(int(len(times) * .85), len(times) - 1)])
-    print("[4/5] 按时间70%/15%/15%划分，训练小型概率模型并测试", flush=True)
+        times, sample_groups = pack["times"], pack["groups"]
+    boundaries = grouped_time_boundaries(times, sample_groups) if source_groups else None
+    if boundaries is None:
+        if has_recording_folders:
+            raise ValueError(
+                "有效样本覆盖不足3个独立记录组，无法进行按文件夹隔离的训练/验证/测试划分；"
+                "请补充独立事件或正常监测文件夹。"
+            )
+        train_end = float(times[min(int(len(times) * .7), len(times) - 1)])
+        validation_end = float(times[min(int(len(times) * .85), len(times) - 1)])
+        split_unit = "time_fallback_flat_directory"
+    else:
+        train_end, validation_end = boundaries
+        split_unit = "recording_group_chronological"
+    print(f"[4/5] 按{split_unit}划分训练、验证和测试集", flush=True)
     report = train(root / "dataset.npz", root / "run", train_end, validation_end,
                    ridges=[ridge], threshold=threshold)
+    report["split_unit"] = split_unit
+    write_json(root / "run" / "metrics.json", report)
 
     print("[5/5] 保存模型、测试报告和最新一次预测", flush=True)
     from .io import read_json
@@ -222,6 +297,8 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
     write_json(root / "prediction.json", prediction)
     summary = dict(output=str(root), backend=backend, input=assumptions,
                    samples=dataset_report["samples"], skipped=dataset_report["skipped"],
+                   split_unit=split_unit,
+                   recording_groups=len(source_groups),
                    train_end=iso(train_end), validation_end=iso(validation_end),
                    model=str(root / "run/model.json"), metrics=str(root / "run/metrics.json"),
                    prediction=str(root / "prediction.json"),
