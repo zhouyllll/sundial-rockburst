@@ -54,6 +54,12 @@ def parser():
     p.add_argument("--monitor", default="all")
     p.add_argument("--output", default="artifacts/stream")
     p.add_argument("--quiet", action="store_true", help="不逐行打印，仍立即写入JSONL和CSV")
+    p = commands.add_parser("evaluate-forecast", help="比较Sundial未来特征预测与真实后续特征")
+    p.add_argument("--features", required=True, help="run输出目录中的continuous.csv")
+    p.add_argument("--history-minutes", type=int, choices=[30, 60], default=30)
+    p.add_argument("--step-seconds", type=int, default=30, help="预测起点间隔，默认每30秒一次")
+    p.add_argument("--output", default="artifacts/forecast_eval")
+    add_forecaster(p, default="sundial")
     p = commands.add_parser("demo-raw", help="生成合成bin并跑通目录读取到训练的完整主流程")
     p.add_argument("--output", default="artifacts/demo_raw")
     p = commands.add_parser("extract", help="从 bin manifest 流式提取特征")
@@ -108,6 +114,11 @@ def main(argv=None):
             result = replay_stream(args.continuous_dir, args.microseismic_dir, args.model,
                                    args.output, args.model_path, args.device, args.timezone,
                                    args.monitor, args.quiet)
+        elif args.command == "evaluate-forecast":
+            from .forecast_eval import evaluate_forecasts
+            forecaster = make_forecaster(args)
+            result = evaluate_forecasts(args.features, forecaster, args.output,
+                                        args.history_minutes, args.step_seconds)
         elif args.command == "demo-raw":
             from .workflow import raw_demo
             result = raw_demo(args.output)

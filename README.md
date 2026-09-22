@@ -201,7 +201,27 @@ python -m rockburst run \
 
 简化主流程默认文件结束即可用，提供的微震目录和岩爆清单为实验的完整记录，不再要求填写覆盖表。假设保存在`input_summary.json`。
 
-## 7. 自动训练步骤
+## 7. 直接评估Sundial的未来特征预测
+
+训练流程生成 `continuous.csv` 后，可以单独检查 Sundial 对连续特征的预测是否接近后续实测：
+
+```bash
+python -m rockburst evaluate-forecast \
+  --features artifacts/experiment_01/continuous.csv \
+  --model-path models/sundial-base-128m \
+  --device cuda \
+  --history-minutes 30 \
+  --step-seconds 30 \
+  --output artifacts/forecast_eval_01
+```
+
+该命令不读取岩爆标签，也不训练概率模型。每个预测起点取此前30分钟的10秒 `mean_square` 特征，转换成 `log1p(mean_square)` 后交给Sundial，生成未来30分钟预测；再分别对比未来5、10、30分钟的预测特征均值与真实特征均值。默认每30秒一个起点，需与连续bin时长一致；例如bin为1分钟时传 `--step-seconds 60`。缺失区间或采集配置变化会切断序列，不跨断点拼接预测窗口。
+
+同时计算持值基线：假设未来特征一直等于起点时最近的观测值。查看 `forecast_metrics.json` 中各时窗的 `mae_log_power`、`rmse_log_power`、`bias_log_power`，以及 `mae_improvement_vs_persistence`。改善比例大于0表示Sundial的MAE低于持值基线，小于0表示更差；为0附近表示两者接近。`forecast_comparison.csv` 保留每个起点预测值、真实值和误差，可用于定位具体时段。
+
+这评估的是**能量特征的时窗平均走势**，不是原始高频岩爆波形重建，也不是岩爆概率准确率。每30秒起点的30分钟目标窗口彼此重叠，因此起点数不等于独立样本数；应把它作为模型诊断，不把这些行当成独立事件做显著性结论。
+
+## 8. 自动训练步骤
 
 1. 从文件名和大小生成两路文件索引。
 2. 连续数据每10秒提取特征，微震数据每个片段提取特征。
@@ -216,7 +236,7 @@ python -m rockburst run \
 
 保存的数据在岩爆时刻结束，也能使用已确认的岩爆时间生成该事件前的正样本。正常时段仍用于训练负样本；训练用的真实标签与流式预测输入分开。
 
-## 8. 查看结果
+## 9. 查看结果
 
 ```text
 artifacts/experiment_01/
@@ -243,7 +263,7 @@ artifacts/experiment_01/
 
 真实数据、权重、缓存和输出已被Git忽略，不会上传。运行时不会把基线自动冒充Sundial。
 
-## 9. 按一个bin一步流式预测
+## 10. 按一个bin一步流式预测
 
 先用上面的`run`得到30分钟窗口模型，再运行：
 
@@ -316,7 +336,7 @@ python -m rockburst predict \
 
 替换为数据中的实际时刻，保持与训练相同的backend、权重、设备、样本数和区域。预测不需要未来岩爆标签。
 
-## 10. 配置与源码
+## 11. 配置与源码
 
 建议8～16核CPU、32～64GB内存、单张8～16GB显存GPU，或先用CPU。工作盘1TB SSD起步，按原始数据量扩充。无需多卡，小概率模型在CPU训练。
 
