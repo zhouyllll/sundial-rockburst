@@ -2,8 +2,20 @@
 
 import csv
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
+import re
+
+
+def local_path(value):
+    """Accept native paths and translate Windows drive paths inside WSL."""
+    text = str(value)
+    match = re.match(r"^([A-Za-z]):[\\/]?(.*)$", text)
+    if match and os.name != "nt":
+        tail = match[2].replace("\\", "/")
+        return Path("/mnt") / match[1].lower() / tail
+    return Path(text)
 
 
 def timestamp(value):
@@ -18,7 +30,7 @@ def iso(value):
 
 
 def read_csv(path, required):
-    with Path(path).open(encoding="utf-8-sig", newline="") as stream:
+    with local_path(path).open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         missing = set(required) - set(reader.fieldnames or [])
         if missing:
@@ -27,7 +39,7 @@ def read_csv(path, required):
 
 
 def write_csv(path, rows, columns):
-    path = Path(path)
+    path = local_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Atomic replacement prevents a failed run from leaving a half-written table.
     temporary = path.with_name(path.name + ".tmp")
@@ -39,7 +51,7 @@ def write_csv(path, rows, columns):
 
 
 def write_json(path, value):
-    path = Path(path)
+    path = local_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2,
@@ -48,4 +60,4 @@ def write_json(path, value):
 
 
 def read_json(path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return json.loads(local_path(path).read_text(encoding="utf-8"))

@@ -4,9 +4,10 @@ The convenience workflow assumes the supplied microseismic archive and labels
 are complete. CSVs are internal artifacts, not forms for the user to fill in.
 """
 
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+import hashlib
 import re
 
 import numpy as np
@@ -14,7 +15,7 @@ import numpy as np
 from .data import Inputs, build_dataset
 from .extract import extract
 from .forecast import Forecaster
-from .io import iso, read_csv, write_csv, write_json
+from .io import iso, local_path, read_csv, write_csv, write_json
 from .model import probabilities, train
 
 
@@ -32,7 +33,7 @@ def local_time(value, timezone):
 
 
 def scan_bins(directory, zone, timezone="Asia/Shanghai", event_clips=False):
-    root = Path(directory)
+    root = local_path(directory)
     if not root.is_dir():
         raise ValueError(f"bin目录不存在: {root}")
     rows = []
@@ -59,21 +60,92 @@ def scan_bins(directory, zone, timezone="Asia/Shanghai", event_clips=False):
     return rows
 
 
-def read_burst_times(path, zone, timezone):
-    """Accept one timestamp per text line, or an existing CSV with onset_time."""
-    path = Path(path)
+def _parse_clock_range(line):
+    """Parse HH:MM:SS-HH:MM:SS, including dot/minor separator typos."""
+    match = re.fullmatch(
+        r"\s*(\d{1,2})[:.](\d{2})[:.](\d{2})\s*-\s*"
+        r"(\d{1,2})[:.](\d{2})[:.-](\d{2})\s*", line)
+    if not match:
+        return None
+    h1, m1, s1, h2, m2, s2 = map(int, match.groups())
+    try:
+        return time(h1, m1, s1), time(h2, m2, s2)
+    except ValueError as exc:
+        raise ValueError(f"无效的岩爆时刻范围: {line}") from exc
+
+
+def _folder_windows(continuous_rows, continuous_root, timezone):
+    root = local_path(continuous_root).resolve()
+    grouped = {}
+    for row in continuous_rows:
+        filepath = Path(row["file_path"]).resolve()
+        relative = filepath.relative_to(root)
+        folder = relative.parts[0] if len(relative.parts) > 1 else "."
+        start = local_time(row["start_time"], timezone)
+        end = local_time(row["available_time"], timezone)
+        bounds = grouped.setdefault(folder, [start, end])
+        bounds[0] = min(bounds[0], start)
+        bounds[1] = max(bounds[1], end)
+    return grouped
+
+
+def _resolve_clock_range(start_clock, end_clock, bounds, timezone):
+    tz = ZoneInfo(timezone)
+    first_day = datetime.fromtimestamp(bounds[0], tz).date() - timedelta(days=1)
+    last_day = datetime.fromtimestamp(bounds[1], tz).date() + timedelta(days=1)
+    matches = []
+    day = first_day
+    while day <= last_day:
+        start_dt = datetime.combine(day, start_clock, tzinfo=tz)
+        end_day = day + timedelta(days=1) if end_clock < start_clock else day
+        end_dt = datetime.combine(end_day, end_clock, tzinfo=tz)
+        start, end = start_dt.timestamp(), end_dt.timestamp()
+        if bounds[0] <= start <= bounds[1] and start <= end <= bounds[1] + 86400:
+            matches.append((start, end))
+        day += timedelta(days=1)
+    return matches
+
+
+def read_burst_times(path, zone, timezone, continuous_rows=None, continuous_root=None):
+    """Read full timestamps or time-of-day ranges matched to event-folder bin dates."""
+    path = local_path(path)
     if path.suffix.lower() == ".csv":
         entries = read_csv(path, ["onset_time"])
         values = [(r["onset_time"], r.get("end_time") or r["onset_time"],
                    r.get("event_id") or f"rb-{i+1:04d}", r.get("group_id") or f"group-{i+1:04d}")
                   for i, r in enumerate(entries)]
+        rows = [dict(event_id=eid, zone_id=zone, onset_time=iso(local_time(start, timezone)),
+                     end_time=iso(local_time(end, timezone)), group_id=group)
+                for start, end, eid, group in values]
     else:
         lines = [line.strip() for line in path.read_text(encoding="utf-8-sig").splitlines()
                  if line.strip() and not line.lstrip().startswith("#")]
-        values = [(line, line, f"rb-{i+1:04d}", f"group-{i+1:04d}") for i, line in enumerate(lines)]
-    rows = [dict(event_id=eid, zone_id=zone, onset_time=iso(local_time(start, timezone)),
-                 end_time=iso(local_time(end, timezone)), group_id=group)
-            for start, end, eid, group in values]
+        rows = []
+        clock_entries = []
+        for i, line in enumerate(lines):
+            parsed = _parse_clock_range(line)
+            if parsed:
+                clock_entries.append((i, line, *parsed))
+            else:
+                rows.append(dict(event_id=f"rb-{i+1:04d}", zone_id=zone,
+                                 onset_time=iso(local_time(line, timezone)),
+                                 end_time=iso(local_time(line, timezone)), group_id=f"group-{i+1:04d}"))
+        if clock_entries:
+            if not continuous_rows or not continuous_root:
+                raise ValueError("HH:MM:SS-HH:MM:SS格式需要连续bin目录，以便从子文件夹bin时间补全日期")
+            windows = _folder_windows(continuous_rows, continuous_root, timezone)
+            for i, line, start_clock, end_clock in clock_entries:
+                candidates = []
+                for folder, bounds in windows.items():
+                    for start, end in _resolve_clock_range(start_clock, end_clock, bounds, timezone):
+                        candidates.append((folder, start, end))
+                if len(candidates) != 1:
+                    reason = "没有匹配的事件子文件夹" if not candidates else "匹配到多个事件子文件夹"
+                    raise ValueError(f"第{i+1}行 {line!r} {reason}；请确认每个子文件夹的bin文件名日期覆盖该时刻，且每个时刻只对应一个子文件夹")
+                folder, start, end = candidates[0]
+                group = "folder-" + hashlib.sha1(folder.encode("utf-8")).hexdigest()[:12]
+                rows.append(dict(event_id=f"rb-{i+1:04d}", zone_id=zone, onset_time=iso(start),
+                                 end_time=iso(end), group_id=group))
     if not rows:
         raise ValueError("岩爆时间清单为空，请提供真实岩爆发生时间")
     return sorted(rows, key=lambda row: row["onset_time"])
@@ -90,7 +162,7 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
     events = scan_bins(microseismic_dir, zone, timezone, event_clips=True)
     if not continuous:
         raise ValueError("连续bin目录为空")
-    bursts = read_burst_times(labels, zone, timezone)
+    bursts = read_burst_times(labels, zone, timezone, continuous, continuous_dir)
     generated = root / "generated"
     write_csv(generated / "continuous_manifest.csv", continuous, MANIFEST_COLUMNS)
     write_csv(generated / "microseismic_manifest.csv", events, EVENT_MANIFEST_COLUMNS)
