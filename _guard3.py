@@ -12,7 +12,7 @@ ERR_LOG = REPO / "train_err5.log"
 cmd = [
     sys.executable, "-u", "-m", "rockburst", "run",
     "--continuous-dir", r"G:\1A岩爆预测\岩爆数据集",
-    "--labels", r"G:\1A岩爆预测\label.txt",
+    "--labels", r"G:\1A岩爆预测\rockbursts_full.csv",
     "--model-path", str(REPO / "models" / "sundial-base-128m"),
     "--monitor", "16-35",
     "--device", "cuda",

@@ -220,7 +220,10 @@ def extract(manifest, output, kind, monitor="all", low=50., high=500.):
                     if len({r["signature"] for r in sources}) != 1:
                         continue  # A block crossing a device configuration change is missing.
                     r = sources[0]
-                    avail = max(max(s["available"] for s in sources), b)
+                    # Cell data (covered samples plus zero padding) is fully
+                    # determined at the cell end; bin file end-times may exceed
+                    # the cell boundary, which the causal check rejects.
+                    avail = b
                     jobs.append((zone, a, b, avail,
                                  r["signature"], segments, r["fs"], low, high))
         # 多进程并行计算特征，按时间顺序输出（executor.map 保序）
