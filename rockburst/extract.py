@@ -27,7 +27,8 @@ EVENT_COLUMNS = BASE + ["event_id"] + FEATURES
 
 def channels(spec, count):
     if spec == "all":
-        return list(range(count))
+        # 数据集内通道数不一致（35/36/41/42pt），统一取交集前35通道，保证特征可比、签名一致。
+        return list(range(min(count, 35)))
     result = set()
     for part in spec.split(","):
         ends = [int(v) for v in part.split("-")]
@@ -62,7 +63,7 @@ def load_manifest(path, kind, monitor, low, high):
         if available + 1e-6 < end:
             raise ValueError(f"完整文件 available_time 早于采集结束: {p}")
         selected = channels(monitor, count)
-        config = dict(version=1, fs=fs, channels=count, selected=selected,
+        config = dict(version=1, fs=fs, channels=len(selected), selected=selected,
                       low=low, high=high, dtype="<i4")
         signature = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:16]
         r = dict(path=p, zone=row["zone_id"], start=start, end=end,
@@ -125,6 +126,27 @@ def waveform_features(data, fs, low=50.0, high=500.0):
                 active_fraction=active, low_band_fraction=fraction)
 
 
+def _cell_features(arg):
+    """进程池 worker：拼接各段波形并计算特征。arg=(segments, fs, low, high)
+    段与段之间若存在毫秒级间隙（bin 时钟漂移），以零填充补齐。"""
+    segments, fs, low, high = arg
+    chunks, prev_end = [], None
+    for r, a, b in segments:
+        seg = read_segment(r, a, b)
+        if prev_end is not None:
+            gap = a - prev_end
+            if gap > 1e-6:
+                chunks.append(np.zeros((int(round(gap * fs)), seg.shape[1]), dtype=seg.dtype))
+        chunks.append(seg)
+        prev_end = b
+    data = np.concatenate(chunks, axis=0)
+    target = int(10 * fs)
+    if len(data) < target:
+        data = np.vstack([data, np.zeros((target - len(data), data.shape[1]), dtype=data.dtype)])
+    if abs(len(data) - target) > len(segments):
+        raise ValueError("跨文件采样点数异常")
+    return waveform_features(data, fs, low, high)
+
 def extract(manifest, output, kind, monitor="all", low=50., high=500.):
     records = load_manifest(manifest, kind, monitor, low, high)
     count = 0
@@ -139,8 +161,12 @@ def extract(manifest, output, kind, monitor="all", low=50., high=500.):
                        available_time=iso(r["available"]), preprocessing_id=r["signature"],
                        event_id=r["event_id"], **f)
 
+
+
     def continuous_rows():
         nonlocal count
+        GAP_TOL = 0.2  # bin 之间毫秒级时钟漂移容差（秒）
+        jobs = []  # (zone, a, b, available, signature, segments, fs, low, high)
         for zone in sorted({r["zone"] for r in records}):
             group = sorted((r for r in records if r["zone"] == zone), key=lambda r: r["start"])
             starts = [r["start"] for r in group]
@@ -155,29 +181,41 @@ def extract(manifest, output, kind, monitor="all", low=50., high=500.):
                     idx = bisect_right(starts, a + 1e-6) - 1
                     if idx < 0:
                         continue
-                    position, pieces, sources = a, [], []
+                    position, segments, sources = a, [], []
                     while idx < len(group) and position < b - 1e-6:
                         r = group[idx]
-                        if r["start"] > position + 1e-6 or r["end"] <= position:
-                            break
+                        if r["end"] <= position:
+                            idx += 1
+                            continue
+                        if r["start"] > position + GAP_TOL:
+                            break  # 真实长间隙，本 cell 无法覆盖
+                        start_off = max(position, r["start"])
                         end = min(b, r["end"])
                         sources.append(r)
-                        pieces.append(read_segment(r, position, end))
+                        segments.append((r, start_off, end))
                         position = end
                         idx += 1
-                    if position < b - 1e-6:
+                    if b - position > GAP_TOL:
                         continue
                     if len({r["signature"] for r in sources}) != 1:
                         continue  # A block crossing a device configuration change is missing.
                     r = sources[0]
-                    data = np.concatenate(pieces, axis=0)
-                    if abs(len(data) - 10 * r["fs"]) > len(sources):
-                        raise ValueError("跨文件采样点数异常")
-                    f = waveform_features(data, r["fs"], low, high)
-                    count += 1
-                    yield dict(zone_id=zone, start_time=iso(a), end_time=iso(b),
-                               available_time=iso(max(s["available"] for s in sources)),
-                               preprocessing_id=r["signature"], **f)
+                    avail = max(max(s["available"] for s in sources), b)
+                    jobs.append((zone, a, b, avail,
+                                 r["signature"], segments, r["fs"], low, high))
+        # 多进程并行计算特征，按时间顺序输出（executor.map 保序）
+        import os
+        from concurrent.futures import ProcessPoolExecutor
+        workers = max(1, min(int(os.environ.get("ROCKBURST_WORKERS", "12")), os.cpu_count() or 4))
+        args = [(segments, fs, low, high) for _, _, _, _, _, segments, fs, low, high in jobs]
+        metas = [(zone, a, b, available, signature)
+                 for zone, a, b, available, signature, _, _, _, _ in jobs]
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            for meta, f in zip(metas, executor.map(_cell_features, args)):
+                zone, a, b, available, signature = meta
+                count += 1
+                yield dict(zone_id=zone, start_time=iso(a), end_time=iso(b),
+                           available_time=iso(available), preprocessing_id=signature, **f)
 
     write_csv(output, event_rows() if kind == "events" else continuous_rows(),
               EVENT_COLUMNS if kind == "events" else CONT_COLUMNS)

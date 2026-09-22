@@ -155,7 +155,7 @@ class Inputs:
             raise Unavailable("continuous_too_old_or_unavailable")
         first = math.ceil((now - history_minutes * 60) / 10) * 10 + 10
         blocks = [self.blocks.get(end) for end in range(first, cutoff + 1, 10)]
-        if not blocks or any(r is None or r["available"] > now for r in blocks):
+        if not blocks or any(r is None or r["available"] > now + max_lag_seconds for r in blocks):
             raise Unavailable("continuous_history_incomplete")
         if len(blocks) < history_minutes * 6 - math.ceil(max_lag_seconds / 10) - 1:
             raise Unavailable("continuous_history_too_short")
