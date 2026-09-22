@@ -13,8 +13,9 @@ from .io import iso, write_csv, write_json
 
 def probabilities(x, model):
     x = np.asarray(x, dtype=np.float64)
-    if x.ndim != 3 or x.shape[1:] != (3, len(FEATURE_NAMES)) or not np.isfinite(x).all():
-        raise ValueError("概率模型输入必须为 [N,3,6] 且数值有限")
+    beta = np.asarray(model.get("beta", []), dtype=np.float64)
+    if x.ndim != 3 or x.shape[1:] != (3, len(beta)) or not len(beta) or not np.isfinite(x).all():
+        raise ValueError("概率模型输入必须为 [N,3,F]，且F须与模型特征数相同")
     z = (x - np.asarray(model["mean"])) / np.asarray(model["scale"])
     logits = z @ np.asarray(model["beta"]) + np.asarray(model["intercepts"])
     return 1 - np.cumprod(1 - expit(logits), axis=1)
@@ -95,7 +96,8 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
                 threshold=threshold, horizons=results), p
 
 
-def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), threshold=.5):
+def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), threshold=.5,
+          feature_indices=None, feature_variant=None):
     if train_end >= validation_end or not 0 < threshold < 1:
         raise ValueError("划分时间或报警阈值无效")
     with np.load(dataset, allow_pickle=False) as pack:
@@ -103,8 +105,19 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
         event_ids, groups = pack["event_ids"], pack["groups"]
         metadata = json.loads(str(pack["metadata"]))
     refresh = metadata.get("refresh_seconds", 60.)
-    if metadata["feature_names"] != FEATURE_NAMES:
-        raise ValueError("数据集特征版本不匹配")
+    dataset_feature_names = list(metadata["feature_names"])
+    if x.ndim != 3 or x.shape[1] != 3 or x.shape[2] != len(dataset_feature_names):
+        raise ValueError("数据集特征名与数组维度不匹配")
+    if feature_indices is None:
+        feature_indices = list(range(len(dataset_feature_names)))
+    feature_indices = list(feature_indices)
+    if not feature_indices or len(set(feature_indices)) != len(feature_indices) or any(
+            not isinstance(i, (int, np.integer)) or i < 0 or i >= len(dataset_feature_names)
+            for i in feature_indices):
+        raise ValueError("特征选择索引无效")
+    selected_features = [dataset_feature_names[i] for i in feature_indices]
+    x = x[:, :, feature_indices]
+    model_metadata = dict(metadata, feature_names=selected_features)
     if not np.all(np.diff(times) > 0):
         raise ValueError("数据集时刻必须严格递增")
     splits = dict(train=times + 1800 <= train_end,
@@ -129,14 +142,16 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
         candidates.append((float(score), model))
     _, model = min(candidates, key=lambda item: item[0])
     # Do not refit on validation: the final test evaluates exactly the selected fit.
-    model.update(schema=1, metadata=metadata, threshold=float(threshold),
+    model.update(schema=1, metadata=model_metadata, threshold=float(threshold),
                  calibration="not_independently_calibrated", train_end=iso(train_end),
                  validation_end=iso(validation_end),
-                 parameter_count=9, experimental=True)
+                 feature_variant=feature_variant,
+                 parameter_count=3 + len(selected_features), experimental=True)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     write_json(output / "model.json", model)
     report = dict(backend=metadata["forecast"], calibration=model["calibration"],
+                  feature_variant=feature_variant, feature_names=selected_features,
                   selected_ridge=model["ridge"], candidates=[dict(ridge=m["ridge"], validation_brier=s)
                                                             for s, m in candidates],
                   purged_samples=int(np.sum(~(tr | va | te))), splits={},

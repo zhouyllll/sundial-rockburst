@@ -5,7 +5,8 @@ import csv
 import json
 from pathlib import Path
 
-from .data import Inputs, Unavailable, merge_intervals
+from .data import (FEATURE_NAMES, Inputs, TRANSIENT_FEATURE_NAMES, Unavailable,
+                   merge_intervals, select_model_features)
 from .extract import CONT_COLUMNS, extract, load_manifest, read_segment, waveform_features
 from .forecast import Forecaster
 from .io import iso, timestamp, read_csv, read_json, write_csv, write_json
@@ -19,6 +20,8 @@ def replay_stream(continuous_dir, microseismic_dir, model_file, output, model_pa
     meta = model["metadata"]
     if meta["history_minutes"] != 30:
         raise ValueError("stream 使用30分钟窗口，请先用 --history-minutes 30 训练模型")
+    feature_names = meta.get("feature_names", FEATURE_NAMES)
+    use_transient = any(name in TRANSIENT_FEATURE_NAMES for name in feature_names)
     zone = meta["zone_id"]
     forecast = Forecaster(meta["forecast"]["backend"], model_path, device,
                           meta["forecast"]["samples"])
@@ -84,7 +87,10 @@ def replay_stream(continuous_dir, microseismic_dir, model_file, output, model_pa
                           experimental=True, calibration=model["calibration"])
             try:
                 view = Inputs.from_stream(list(buffer.values()), events, zone, now, microseismic_enabled)
-                x, quality = view.sample(now, forecast, 30, meta["max_lag_seconds"])
+                x, quality = view.sample(now, forecast, 30, meta["max_lag_seconds"],
+                                         include_transient=use_transient)
+                if use_transient:
+                    x = select_model_features(x[None], feature_names)[0]
                 p = probabilities(x[None], model)[0]
                 result.update(p_5min=float(p[0]), p_10min=float(p[1]), p_30min=float(p[2]), quality=quality)
                 valid += 1

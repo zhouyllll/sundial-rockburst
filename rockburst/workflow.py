@@ -12,7 +12,7 @@ import re
 
 import numpy as np
 
-from .data import Inputs, build_dataset
+from .data import (FEATURE_GROUPS, FEATURE_NAMES, TRANSIENT_FEATURE_NAMES, Inputs, build_dataset)
 from .extract import extract
 from .forecast import Forecaster
 from .io import iso, local_path, read_csv, write_csv, write_json
@@ -213,7 +213,7 @@ def read_burst_times(path, zone, timezone, continuous_rows=None, continuous_root
 def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sundial",
                  model_path=None, device="cpu", samples=20, cache=None,
                  zone="zone_A", timezone="Asia/Shanghai", history_minutes=30,
-                 monitor="all", ridge=1., threshold=.5):
+                 monitor="all", ridge=1., threshold=.5, transient_ablation=False):
     root = Path(output)
     root.mkdir(parents=True, exist_ok=True)
     print("[1/5] 扫描bin文件名，自动生成内部索引和岩爆标签", flush=True)
@@ -263,7 +263,7 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
         )
     dataset_report = build_dataset(data, forecast, start, end, root / "dataset.npz", history_minutes,
                                    prediction_times=[local_time(r["available_time"], timezone) for r in continuous],
-                                   source_groups=source_groups)
+                                   source_groups=source_groups, include_transient=transient_ablation)
     with np.load(root / "dataset.npz", allow_pickle=False) as pack:
         times, sample_groups = pack["times"], pack["groups"]
     boundaries = grouped_time_boundaries(times, sample_groups) if source_groups else None
@@ -280,10 +280,53 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
         train_end, validation_end = boundaries
         split_unit = "recording_group_chronological"
     print(f"[4/5] 按{split_unit}划分训练、验证和测试集", flush=True)
+    baseline_indices = list(range(len(FEATURE_NAMES)))
     report = train(root / "dataset.npz", root / "run", train_end, validation_end,
-                   ridges=[ridge], threshold=threshold)
+                   ridges=[ridge], threshold=threshold, feature_indices=baseline_indices,
+                   feature_variant="baseline")
     report["split_unit"] = split_unit
     write_json(root / "run" / "metrics.json", report)
+
+    if transient_ablation:
+        print("[4b/5] 使用相同文件夹分组切分运行历史瞬态特征消融", flush=True)
+        all_names = FEATURE_NAMES + TRANSIENT_FEATURE_NAMES
+        variants = {"baseline": FEATURE_NAMES}
+        for group_name, extra_names in FEATURE_GROUPS.items():
+            if group_name == "baseline":
+                continue
+            variants[f"plus_{group_name}"] = FEATURE_NAMES + extra_names
+        ablation_root = root / "ablation"
+        reports = {"baseline": report}
+        for variant, names in variants.items():
+            if variant == "baseline":
+                continue
+            indices = [all_names.index(name) for name in names]
+            variant_report = train(root / "dataset.npz", ablation_root / variant,
+                                   train_end, validation_end, ridges=[ridge], threshold=threshold,
+                                   feature_indices=indices, feature_variant=variant)
+            variant_report["split_unit"] = split_unit
+            write_json(ablation_root / variant / "metrics.json", variant_report)
+            reports[variant] = variant_report
+        comparison = []
+        for variant, variant_report in reports.items():
+            for split_name in ("validation", "test"):
+                split_report = variant_report["splits"][split_name]
+                for horizon, values in split_report["horizons"].items():
+                    comparison.append(dict(
+                        variant=variant, split=split_name, horizon=horizon,
+                        average_precision=values["average_precision"], brier=values["brier"],
+                        event_recall=values["event_recall"], detected_events=values["detected_events"],
+                        eligible_events=values["eligible_events"], samples=split_report["samples"],
+                        independent_groups=split_report["independent_groups"],
+                        feature_names=";".join(variant_report["feature_names"])))
+        write_csv(ablation_root / "comparison.csv", comparison,
+                  ["variant", "split", "horizon", "average_precision", "brier", "event_recall",
+                   "detected_events", "eligible_events", "samples", "independent_groups", "feature_names"])
+        write_json(ablation_root / "summary.json", dict(
+            split_unit=split_unit, threshold=threshold, history_minutes=history_minutes,
+            step_seconds=float(np.median(np.diff(times))) if len(times) > 1 else None,
+            variants=list(variants), comparisons=comparison,
+            warning="多种特征方案复用同一测试集；结果用于探索消融，最终效果需用新独立记录复核。"))
 
     print("[5/5] 保存模型、测试报告和最新一次预测", flush=True)
     from .io import read_json
@@ -301,6 +344,7 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
                    recording_groups=len(source_groups),
                    train_end=iso(train_end), validation_end=iso(validation_end),
                    model=str(root / "run/model.json"), metrics=str(root / "run/metrics.json"),
+                   transient_ablation=str(root / "ablation/summary.json") if transient_ablation else None,
                    prediction=str(root / "prediction.json"),
                    split_samples={name: value["samples"] for name, value in report["splits"].items()})
     write_json(root / "summary.json", summary)

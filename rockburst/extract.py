@@ -20,9 +20,10 @@ from .io import iso, read_csv, timestamp, write_csv
 
 FEATURES = ["mean_square", "rms", "peak", "energy_proxy", "stalta",
             "coherence", "active_fraction", "low_band_fraction"]
+TRANSIENT_RAW_FEATURES = ["short_window_energy_q99", "short_window_overthreshold_count"]
 BASE = ["zone_id", "start_time", "end_time", "available_time", "preprocessing_id"]
-CONT_COLUMNS = BASE + FEATURES
-EVENT_COLUMNS = BASE + ["event_id"] + FEATURES
+CONT_COLUMNS = BASE + FEATURES + TRANSIENT_RAW_FEATURES
+EVENT_COLUMNS = BASE + ["event_id"] + FEATURES + TRANSIENT_RAW_FEATURES
 
 
 def channels(spec, count):
@@ -108,7 +109,23 @@ def waveform_features(data, fs, low=50.0, high=500.0):
         stalta = float(np.max(sta / np.maximum(lta, 1e-12)))
         active = float(np.mean(channel_power > .5 * channel_power.max()))
     else:
+        envelope = np.zeros_like(power)
         stalta, active = 0., 0.
+    # Capture sub-second concentration inside each 10-second feature cell.
+    # 100 ms windows overlap by 50%, retaining brief energy bursts without
+    # storing or exposing raw waveform samples to the classifier.
+    window = max(32, round(.1 * fs))
+    hop = max(1, round(.05 * fs))
+    if len(power) >= window:
+        frames = np.lib.stride_tricks.sliding_window_view(power, window)[::hop]
+        short_power = np.asarray(frames.mean(axis=1), dtype=np.float64)
+    else:
+        short_power = np.asarray([mean_square], dtype=np.float64)
+    short_median = float(np.median(short_power))
+    short_mad = float(np.median(np.abs(short_power - short_median)))
+    threshold = short_median + 3. * 1.4826 * short_mad
+    overthreshold = int(np.sum(short_power > max(threshold, short_median + 1e-12)))
+    short_q99 = float(np.quantile(short_power, .99))
     if x.shape[1] > 1:
         numerator = np.mean(x[:, :-1] * x[:, 1:], axis=0)
         denominator = np.sqrt(channel_power[:-1] * channel_power[1:])
@@ -120,10 +137,13 @@ def waveform_features(data, fs, low=50.0, high=500.0):
     band = (freq >= low) & (freq <= high)
     low_band = band & (freq < 250)
     fraction = float(psd[low_band].sum() / max(float(psd[band].sum()), 1e-12))
+    peak = float(np.max(np.abs(x)))
     return dict(mean_square=mean_square, rms=math.sqrt(mean_square),
-                peak=float(np.max(np.abs(x))), energy_proxy=mean_square * len(x) / fs,
+                peak=peak, energy_proxy=mean_square * len(x) / fs,
                 stalta=stalta, coherence=min(coherence, 1.),
-                active_fraction=active, low_band_fraction=fraction)
+                active_fraction=active, low_band_fraction=fraction,
+                short_window_energy_q99=short_q99,
+                short_window_overthreshold_count=overthreshold)
 
 
 def _cell_features(arg):

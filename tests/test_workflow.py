@@ -126,6 +126,10 @@ class WorkflowTests(unittest.TestCase):
                                     "--microseismic-dir", "micro", "--labels", "rockbursts.txt"])
         self.assertEqual(args.backend, "sundial")
         self.assertEqual(args.history_minutes, 30)
+        self.assertFalse(args.transient_ablation)
+        ablation = parser().parse_args(["run", "--continuous-dir", "continuous",
+                                        "--labels", "labels.txt", "--transient-ablation"])
+        self.assertTrue(ablation.transient_ablation)
         self.assertFalse(hasattr(args, "coverage"))
 
     def test_run_accepts_missing_microseismic_directory(self):

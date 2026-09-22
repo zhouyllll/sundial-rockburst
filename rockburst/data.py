@@ -7,14 +7,37 @@ import math
 
 import numpy as np
 
-from .extract import CONT_COLUMNS, EVENT_COLUMNS, FEATURES
+from .extract import BASE, FEATURES
 from .io import read_csv, timestamp, iso, write_json
 
 
 FEATURE_NAMES = ["short_log_power_change", "short_coherence", "log_event_count_6h",
                  "log_event_energy_24h", "log_minutes_since_event",
                  "forecast_log_power_change"]
+TRANSIENT_FEATURE_NAMES = ["recent_peak_log", "recent_crest_factor", "recent_stalta_log",
+                           "recent_short_energy_q99_log", "recent_overthreshold_count_log"]
+FEATURE_GROUPS = {
+    "baseline": [],
+    "peak_crest": ["recent_peak_log", "recent_crest_factor"],
+    "stalta": ["recent_stalta_log"],
+    "energy_q99": ["recent_short_energy_q99_log"],
+    "overthreshold_count": ["recent_overthreshold_count_log"],
+    "all_transient": TRANSIENT_FEATURE_NAMES,
+}
+ALL_FEATURE_NAMES = FEATURE_NAMES + TRANSIENT_FEATURE_NAMES
 HORIZONS = np.array([300., 600., 1800.])
+
+
+def select_model_features(x, feature_names):
+    """Slice a full baseline+transient sample in the model's saved feature order."""
+    feature_names = list(feature_names or FEATURE_NAMES)
+    if len(set(feature_names)) != len(feature_names) or any(name not in ALL_FEATURE_NAMES for name in feature_names):
+        raise ValueError("模型包含未知或重复的特征名")
+    values = np.asarray(x)
+    if values.ndim != 3 or values.shape[-1] != len(ALL_FEATURE_NAMES):
+        raise ValueError("全量预测特征应为[N,3,11]")
+    indices = [ALL_FEATURE_NAMES.index(name) for name in feature_names]
+    return values[:, :, indices]
 
 
 class Unavailable(ValueError):
@@ -43,6 +66,7 @@ class Inputs:
             raise Unavailable("continuous_history_incomplete")
         obj.signature = next(iter(signatures))
         obj.blocks = {round(timestamp(r["end_time"])): cls._feature(r) for r in continuous_rows}
+        obj.transient_features_available = all(r.get("_transient_present", False) for r in obj.blocks.values())
         if any(r["preprocessing_id"] != obj.signature for r in event_rows):
             raise ValueError("微震与连续特征的采集配置不一致")
         obj.events = sorted((cls._feature(r) for r in event_rows), key=lambda r: r["start"])
@@ -59,7 +83,7 @@ class Inputs:
         self.microseismic_enabled = microseismic_enabled
         self.blocks = {}
         signatures = set()
-        for row in read_csv(continuous, CONT_COLUMNS):
+        for row in read_csv(continuous, BASE + FEATURES):
             if row["zone_id"] != zone:
                 continue
             r = self._feature(row)
@@ -73,9 +97,10 @@ class Inputs:
         if not self.blocks or len(signatures) != 1:
             raise ValueError("所选区域无连续数据或包含多种采集配置；请先按一致物理通道配置分组")
         self.signature = next(iter(signatures))
+        self.transient_features_available = all(r.get("_transient_present", False) for r in self.blocks.values())
         self.ends = sorted(self.blocks)
         self.events, seen = [], set()
-        for row in read_csv(events, EVENT_COLUMNS):
+        for row in read_csv(events, BASE + ["event_id"] + FEATURES):
             if row["zone_id"] != zone:
                 continue
             if row["event_id"] in seen or not row["event_id"]:
@@ -122,7 +147,12 @@ class Inputs:
     @staticmethod
     def _feature(row):
         r = {key: float(row[key]) for key in FEATURES}
-        if not all(math.isfinite(v) and v >= 0 for v in r.values()):
+        transient_fields = ["short_window_energy_q99", "short_window_overthreshold_count"]
+        present = all(row.get(key) not in (None, "") for key in transient_fields)
+        for key in transient_fields:
+            r[key] = float(row[key]) if row.get(key) not in (None, "") else 0.
+        r["_transient_present"] = present
+        if not all(math.isfinite(v) and v >= 0 for k, v in r.items() if not k.startswith("_")):
             raise ValueError("特征中有负数、NaN 或无穷值")
         if any(r[k] > 1 + 1e-6 for k in ["coherence", "active_fraction", "low_band_fraction"]):
             raise ValueError("比例特征超出[0,1]")
@@ -135,7 +165,8 @@ class Inputs:
     def covered(self, start, end, flag):
         return any(a <= start + 1e-6 and b >= end - 1e-6 for a, b in self.coverage[flag])
 
-    def sample(self, now, forecaster, history_minutes=60, max_lag_seconds=60):
+    def sample(self, now, forecaster, history_minutes=60, max_lag_seconds=60,
+               include_transient=False):
         if history_minutes not in {30, 60}:
             raise ValueError("基础版 history_minutes 只支持30或60")
         if not 0 <= max_lag_seconds <= 60:
@@ -176,7 +207,24 @@ class Inputs:
         paths = paths[:, lag_steps:lag_steps + 180]
         x = np.tile(z, (3, 1))
         for j, (a, b) in enumerate([(0, 30), (30, 60), (60, 180)]):
-            x[j, -1] = float(np.median(paths[:, a:b].mean(axis=1))) - np.log1p(power[-30:].mean())
+            x[j, len(FEATURE_NAMES) - 1] = float(np.median(paths[:, a:b].mean(axis=1))) - np.log1p(power[-30:].mean())
+        if include_transient:
+            if not self.transient_features_available:
+                raise Unavailable("transient_features_missing; 请重新从原始bin提取特征")
+            recent = blocks[-30:]
+            peaks = np.asarray([r["peak"] for r in recent], dtype=np.float64)
+            rms = np.asarray([r["rms"] for r in recent], dtype=np.float64)
+            stalta = np.asarray([r["stalta"] for r in recent], dtype=np.float64)
+            q95 = np.asarray([r["short_window_energy_q99"] for r in recent], dtype=np.float64)
+            counts = np.asarray([r["short_window_overthreshold_count"] for r in recent], dtype=np.float64)
+            transient = np.asarray([
+                np.log1p(float(np.max(peaks))),
+                np.log1p(float(np.mean(peaks / np.maximum(rms, 1e-12)))),
+                np.log1p(float(np.max(stalta))),
+                np.log1p(float(np.quantile(q95, .95))),
+                np.log1p(float(np.sum(counts))),
+            ])
+            x = np.concatenate([x, np.tile(transient, (3, 1))], axis=1)
         if not np.isfinite(x).all():
             raise ValueError("融合特征包含非法值")
         return x, {"continuous_cutoff": iso(cutoff), "continuous_lag_seconds": now - cutoff,
@@ -207,7 +255,7 @@ class Inputs:
 
 
 def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, max_lag_seconds=60,
-                  prediction_times=None, source_groups=None):
+                  prediction_times=None, source_groups=None, include_transient=False):
     if start >= end:
         raise ValueError("start 必须早于 end")
     if prediction_times is None and (start % 60 or end % 60):
@@ -220,7 +268,11 @@ def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, ma
     for i, now in enumerate(schedule):
         try:
             y, mask, event_id, group = inputs.label(now)
-            x, _ = inputs.sample(now, forecaster, history_minutes, max_lag_seconds)
+            if include_transient:
+                x, _ = inputs.sample(now, forecaster, history_minutes, max_lag_seconds,
+                                     include_transient=True)
+            else:
+                x, _ = inputs.sample(now, forecaster, history_minutes, max_lag_seconds)
         except Unavailable as exc:
             skipped[str(exc)] += 1
             continue
@@ -240,7 +292,8 @@ def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, ma
             print(f"已扫描 {i + 1} 个预测时刻，有效 {len(xs)}", flush=True)
     if not xs:
         raise ValueError(f"没有有效样本: {dict(skipped)}")
-    metadata = dict(schema=1, feature_names=FEATURE_NAMES, zone_id=inputs.zone,
+    feature_names = FEATURE_NAMES + (TRANSIENT_FEATURE_NAMES if include_transient else [])
+    metadata = dict(schema=1, feature_names=feature_names, zone_id=inputs.zone,
                     preprocessing_id=inputs.signature, history_minutes=history_minutes,
                     max_lag_seconds=max_lag_seconds, forecast=forecaster.identity,
                     microseismic_enabled=getattr(inputs, "microseismic_enabled", True),

@@ -10,7 +10,7 @@ from rockburst.extract import extract, CONT_COLUMNS, EVENT_COLUMNS
 from rockburst.forecast import Forecaster
 from rockburst.io import iso, timestamp, write_csv, read_csv
 from rockburst.model import fit_hazard, probabilities, average_precision, train
-from rockburst.data import FEATURE_NAMES
+from rockburst.data import FEATURE_NAMES, TRANSIENT_FEATURE_NAMES, select_model_features
 
 
 class PipelineTests(unittest.TestCase):
@@ -24,7 +24,8 @@ class PipelineTests(unittest.TestCase):
             self.rows.append(dict(zone_id="z", start_time=iso(end - 10), end_time=iso(end),
                                   available_time=iso(end), preprocessing_id="test-v1",
                                   mean_square=10., rms=10. ** .5, peak=10., energy_proxy=100.,
-                                  stalta=2., coherence=.5, active_fraction=.5, low_band_fraction=.7))
+                                  stalta=2., coherence=.5, active_fraction=.5, low_band_fraction=.7,
+                                  short_window_energy_q99=15., short_window_overthreshold_count=2))
         self.events = []
         self.bursts = []
         self.coverage = [dict(zone_id="z", start_time=iso(self.now - 86400),
@@ -56,6 +57,9 @@ class PipelineTests(unittest.TestCase):
     def test_empty_event_history_is_valid_with_coverage(self):
         x, quality = self.inputs().sample(self.now, Forecaster())
         self.assertEqual(x.shape, (3, 6))
+        transient, _ = self.inputs().sample(self.now, Forecaster(), include_transient=True)
+        self.assertEqual(transient.shape, (3, 11))
+        self.assertGreater(transient[0, -1], 0.)
         self.assertEqual(quality["microseismic_count_24h"], 0)
         self.assertTrue(np.isfinite(x).all())
 
@@ -221,6 +225,20 @@ class BinTests(unittest.TestCase):
             self.assertGreater(float(features[0]["rms"]), 600)
             self.assertAlmostEqual(float(features[0]["coherence"]), 1., places=5)
 
+    def test_subsecond_transient_features_detect_local_energy_burst(self):
+        from rockburst.extract import waveform_features
+        rng = np.random.default_rng(19)
+        fs = 2000
+        t = np.arange(10 * fs) / fs
+        base = .5 * np.sin(2 * np.pi * 120 * t)
+        wave = np.column_stack([base + rng.normal(0, .05, len(t))] * 2)
+        pulse = (t >= 5.) & (t < 5.2)
+        wave[pulse] += 15. * np.sin(2 * np.pi * 120 * t[pulse, None])
+        features = waveform_features(wave, fs)
+        self.assertGreater(features["short_window_energy_q99"], features["mean_square"])
+        self.assertGreater(features["short_window_overthreshold_count"], 0)
+        self.assertGreater(features["peak"] / features["rms"], 1.)
+
     def test_truncated_bin_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -283,6 +301,36 @@ class SplitTests(unittest.TestCase):
             train(path, root / "run2", origin + 100 * 60, origin + 200 * 60, ridges=[1.])
             model2 = json.loads((root / "run2/model.json").read_text())
             self.assertEqual(model1, model2)
+
+    def test_inference_selects_the_saved_ablation_feature_order(self):
+        full = np.arange(3 * 11, dtype=float).reshape(1, 3, 11)
+        selected_names = FEATURE_NAMES + TRANSIENT_FEATURE_NAMES[:2]
+        actual = select_model_features(full, selected_names)
+        self.assertEqual(actual.shape, (1, 3, 8))
+        np.testing.assert_array_equal(actual, full[:, :, :8])
+
+    def test_train_supports_selected_transient_feature_subset(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path, origin, x, y, mask, times, ids, groups, _ = self.make_dataset(root)
+            names = FEATURE_NAMES + ["recent_peak_log", "recent_crest_factor",
+                                     "recent_stalta_log", "recent_short_energy_q99_log",
+                                     "recent_overthreshold_count_log"]
+            expanded = np.concatenate([x, np.random.default_rng(31).normal(size=(len(x), 3, 5))], axis=2)
+            with np.load(path, allow_pickle=False) as pack:
+                metadata = json.loads(str(pack["metadata"]))
+            metadata["feature_names"] = names
+            np.savez_compressed(path, x=expanded, y=y, mask=mask, times=times,
+                                event_ids=np.array(ids), groups=np.array(groups),
+                                metadata=json.dumps(metadata))
+            selected = list(range(8))
+            report = train(path, root / "run", origin + 100 * 60, origin + 200 * 60,
+                           ridges=[1.], feature_indices=selected, feature_variant="plus_peak_crest")
+            model = json.loads((root / "run/model.json").read_text())
+            self.assertEqual(len(model["beta"]), 8)
+            self.assertEqual(model["metadata"]["feature_names"], names[:8])
+            self.assertEqual(report["feature_variant"], "plus_peak_crest")
+            self.assertEqual(set(report["splits"]), {"train", "validation", "test"})
 
     def test_same_event_group_cannot_cross_splits(self):
         with tempfile.TemporaryDirectory() as folder:

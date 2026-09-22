@@ -201,7 +201,34 @@ python -m rockburst run \
 
 简化主流程默认文件结束即可用，提供的微震目录和岩爆清单为实验的完整记录，不再要求填写覆盖表。假设保存在`input_summary.json`。
 
-## 7. 直接评估Sundial的未来特征预测
+## 7. 比较短时瞬态特征是否改善预警
+
+在完整的`run`训练命令末尾加`--transient-ablation`，例如：
+
+```bash
+python -m rockburst run \
+  --continuous-dir "/mnt/g/1A岩爆预测/岩爆数据集/5.10.8.49" \
+  --labels data/rockbursts.txt \
+  --model-path models/sundial-base-128m \
+  --device cuda \
+  --output artifacts/transient_ablation \
+  --transient-ablation
+```
+
+程序会先照常训练原有基线，再用**同一批样本、同一文件夹分组和同一时间切分**重复训练以下对照：
+
+- `baseline`：当前已有输入特征。
+- `plus_peak_crest`：最近5分钟内10秒块峰值、峰均比。
+- `plus_stalta`：最近5分钟内STA/LTA。
+- `plus_energy_q99`：每个10秒块内100毫秒短窗能量q99，再对最近5分钟取q95。
+- `plus_overthreshold_count`：最近5分钟中超过该10秒块背景阈值的100毫秒短窗数。
+- `plus_all_transient`：以上瞬态特征全部加入。
+
+短窗以100毫秒为窗长、50毫秒步长；超阈值按每个10秒块的短窗能量中位数加3倍稳健标准差计算。新增特征只从预测时刻以前已经可用的数据计算，不使用未来波形。要捕捉亚秒变化，需用原始bin重新提取特征；旧版`continuous.csv`没有新增短窗列。
+
+结果在`artifacts/transient_ablation/ablation/`：`comparison.csv`按验证集/测试集列出三个预测时窗的AP、Brier、事件检出率及检出/可检事件数；`summary.json`记录整体划分和注意事项；每个方案的独立子目录保留模型、指标和预测明细。事件检出率按`--threshold`（默认0.5）计算。应先依据验证集选择方案，再把测试集作为最终参考；由于这里只使用少量岩爆事件，多个对照共享测试集的结果属于探索性比较，不能当成独立重复实验或已验证的现场预警性能。
+
+## 8. 直接评估Sundial的未来特征预测
 
 训练流程生成 `continuous.csv` 后，可以单独检查 Sundial 对连续特征的预测是否接近后续实测：
 
@@ -221,7 +248,7 @@ python -m rockburst evaluate-forecast \
 
 这评估的是**能量特征的时窗平均走势**，不是原始高频岩爆波形重建，也不是岩爆概率准确率。每30秒起点的30分钟目标窗口彼此重叠，因此起点数不等于独立样本数；应把它作为模型诊断，不把这些行当成独立事件做显著性结论。
 
-## 8. 自动训练步骤
+## 9. 自动训练步骤
 
 1. 从文件名和大小生成两路文件索引。
 2. 连续数据每10秒提取特征，微震数据每个片段提取特征。
@@ -236,7 +263,7 @@ python -m rockburst evaluate-forecast \
 
 保存的数据在岩爆时刻结束，也能使用已确认的岩爆时间生成该事件前的正样本。正常时段仍用于训练负样本；训练用的真实标签与流式预测输入分开。
 
-## 9. 查看结果
+## 10. 查看结果
 
 ```text
 artifacts/experiment_01/
@@ -263,7 +290,7 @@ artifacts/experiment_01/
 
 真实数据、权重、缓存和输出已被Git忽略，不会上传。运行时不会把基线自动冒充Sundial。
 
-## 10. 按一个bin一步流式预测
+## 11. 按一个bin一步流式预测
 
 先用上面的`run`得到30分钟窗口模型，再运行：
 
@@ -336,7 +363,7 @@ python -m rockburst predict \
 
 替换为数据中的实际时刻，保持与训练相同的backend、权重、设备、样本数和区域。预测不需要未来岩爆标签。
 
-## 11. 配置与源码
+## 12. 配置与源码
 
 建议8～16核CPU、32～64GB内存、单张8～16GB显存GPU，或先用CPU。工作盘1TB SSD起步，按原始数据量扩充。无需多卡，小概率模型在CPU训练。
 

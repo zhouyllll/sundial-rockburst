@@ -4,7 +4,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from .extract import CONT_COLUMNS
+from .extract import BASE, FEATURES
 from .io import iso, read_csv, timestamp, write_csv, write_json
 
 HORIZONS = (("5min", 30), ("10min", 60), ("30min", 180))
@@ -52,7 +52,7 @@ def evaluate_forecasts(features_csv, forecaster, output_dir, history_minutes=30,
         raise ValueError("step_seconds 必须是10秒的正整数倍")
     history_count = history_minutes * 6
     stride = step_seconds // 10
-    rows = read_csv(features_csv, CONT_COLUMNS)
+    rows = read_csv(features_csv, BASE + FEATURES)
     if not rows:
         raise ValueError("连续特征CSV为空")
     by_zone = defaultdict(list)

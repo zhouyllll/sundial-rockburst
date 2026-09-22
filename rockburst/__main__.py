@@ -43,6 +43,8 @@ def parser():
     p.add_argument("--monitor", default="all")
     p.add_argument("--ridge", type=float, default=1.)
     p.add_argument("--threshold", type=float, default=.5)
+    p.add_argument("--transient-ablation", action="store_true",
+                   help="附加短时峰值/峰均比/STA-LTA/100ms能量分位数/阈值计数受控对照")
     add_forecaster(p, default="sundial")
     p = commands.add_parser("stream", help="按bin时间顺序流式回放，每到一个完整bin预测一次")
     p.add_argument("--continuous-dir", required=True)
@@ -108,7 +110,8 @@ def main(argv=None):
             result = run_workflow(args.continuous_dir, args.microseismic_dir, args.labels,
                                   args.output, args.backend, args.model_path, args.device,
                                   args.samples, args.cache, args.zone, args.timezone,
-                                  args.history_minutes, args.monitor, args.ridge, args.threshold)
+                                  args.history_minutes, args.monitor, args.ridge, args.threshold,
+                                  args.transient_ablation)
         elif args.command == "stream":
             from .stream import replay_stream
             result = replay_stream(args.continuous_dir, args.microseismic_dir, args.model,
@@ -148,7 +151,13 @@ def main(argv=None):
                 raise ValueError("区域或预处理配置与训练时不一致")
             now = timestamp(args.at)
             try:
-                x, quality = data.sample(now, forecast, meta["history_minutes"], meta["max_lag_seconds"])
+                from .data import FEATURE_NAMES, TRANSIENT_FEATURE_NAMES, select_model_features
+                feature_names = meta.get("feature_names", FEATURE_NAMES)
+                use_transient = any(name in TRANSIENT_FEATURE_NAMES for name in feature_names)
+                x, quality = data.sample(now, forecast, meta["history_minutes"],
+                                         meta["max_lag_seconds"], include_transient=use_transient)
+                if use_transient:
+                    x = select_model_features(x[None], feature_names)[0]
             except Unavailable as exc:
                 result = dict(status="insufficient_data", reason=str(exc), time=iso(now),
                               p_5min=None, p_10min=None, p_30min=None)
