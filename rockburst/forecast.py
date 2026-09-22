@@ -39,8 +39,12 @@ class Forecaster:
                 from transformers import AutoModelForCausalLM
             except ImportError as exc:
                 raise ValueError("请先安装 requirements-sundial.txt 和适合本机的 PyTorch") from exc
-            if transformers.__version__ != "4.40.1":
-                raise ValueError("基础版 Sundial 适配器要求 transformers==4.40.1")
+            try:
+                tf_major, tf_minor = (int(x) for x in transformers.__version__.split(".")[:2])
+            except ValueError:
+                raise ValueError(f"无法解析 transformers 版本: {transformers.__version__}")
+            if (tf_major, tf_minor) < (4, 40):
+                raise ValueError(f"Sundial 适配器要求 transformers>=4.40，当前为 {transformers.__version__}")
             self.model = AutoModelForCausalLM.from_pretrained(
                 str(folder), trust_remote_code=True, local_files_only=True,
                 torch_dtype=torch.float32).to(device).eval()

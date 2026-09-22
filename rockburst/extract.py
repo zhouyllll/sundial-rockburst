@@ -143,9 +143,6 @@ def extract(manifest, output, kind, monitor="all", low=50., high=500.):
         nonlocal count
         for zone in sorted({r["zone"] for r in records}):
             group = sorted((r for r in records if r["zone"] == zone), key=lambda r: r["start"])
-            for left, right in zip(group, group[1:]):
-                if right["start"] < left["end"] - 1e-6:
-                    raise ValueError(f"连续文件重叠，请去重或修正 manifest: {left['path']}, {right['path']}")
             starts = [r["start"] for r in group]
             # Iterate occupied grid cells, not long gaps between recordings.
             last_cell = None
