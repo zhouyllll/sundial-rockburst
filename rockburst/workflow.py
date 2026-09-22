@@ -1,4 +1,4 @@
-"""Main path: two bin directories + rockburst times -> trained model.
+"""Main path: continuous bins + optional microseismic bins + rockburst times.
 
 The convenience workflow assumes the supplied microseismic archive and labels
 are complete. CSVs are internal artifacts, not forms for the user to fill in.
@@ -58,6 +58,11 @@ def scan_bins(directory, zone, timezone="Asia/Shanghai", event_clips=False):
         rows.append(row)
     rows.sort(key=lambda row: row["start_time"])
     return rows
+
+
+def scan_optional_bins(directory, zone, timezone="Asia/Shanghai", event_clips=False):
+    """A missing optional archive means the corresponding input branch is disabled."""
+    return scan_bins(directory, zone, timezone, event_clips) if directory else []
 
 
 def _parse_clock_range(line):
@@ -159,7 +164,8 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
     root.mkdir(parents=True, exist_ok=True)
     print("[1/5] 扫描bin文件名，自动生成内部索引和岩爆标签", flush=True)
     continuous = scan_bins(continuous_dir, zone, timezone)
-    events = scan_bins(microseismic_dir, zone, timezone, event_clips=True)
+    microseismic_enabled = bool(microseismic_dir)
+    events = scan_optional_bins(microseismic_dir, zone, timezone, event_clips=True)
     if not continuous:
         raise ValueError("连续bin目录为空")
     bursts = read_burst_times(labels, zone, timezone, continuous, continuous_dir)
@@ -171,11 +177,16 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
     last = max(local_time(r["available_time"], timezone) for r in continuous)
     # Explicit happy-path assumption: supplied archive/labels cover this experiment.
     write_csv(generated / "coverage.csv", [dict(zone_id=zone, start_time=iso(first - 86400),
-              end_time=iso(last), event_archive_complete=1, rockburst_record_complete=1)], COVERAGE_COLUMNS)
+              end_time=iso(last), event_archive_complete=int(microseismic_enabled),
+              rockburst_record_complete=1)], COVERAGE_COLUMNS)
     assumptions = dict(mode="simple_directory_workflow", timezone=timezone,
                        bin_format="headerless little-endian int32, sample-major interleaved channels",
-                       availability="file_end_time_assumed", microseismic_unit="whole_detected_clip",
-                       microseismic_archive_assumed_complete=True, rockburst_labels_assumed_complete=True,
+                       availability="file_end_time_assumed",
+                       microseismic_unit="whole_detected_clip" if microseismic_enabled else None,
+                       microseismic_enabled=microseismic_enabled,
+                       microseismic_archive_assumed_complete=microseismic_enabled,
+                       disabled_microseismic_behavior="event features omitted; zero clips represented" if not microseismic_enabled else None,
+                       rockburst_labels_assumed_complete=True,
                        continuous_files=len(continuous), microseismic_files=len(events),
                        labeled_rockbursts=len(bursts))
     write_json(root / "input_summary.json", assumptions)
@@ -184,7 +195,7 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
     extract(generated / "continuous_manifest.csv", root / "continuous.csv", "continuous", monitor)
     extract(generated / "microseismic_manifest.csv", root / "events.csv", "events", monitor)
     data = Inputs(root / "continuous.csv", root / "events.csv", generated / "coverage.csv",
-                  zone, generated / "rockbursts.csv")
+                  zone, generated / "rockbursts.csv", microseismic_enabled=microseismic_enabled)
     forecast = Forecaster(backend, model_path, device, samples, cache or root / "cache")
     start = first + history_minutes * 60
     end = last + 1e-6

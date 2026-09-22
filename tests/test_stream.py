@@ -15,6 +15,11 @@ from rockburst.workflow import scan_bins, MANIFEST_COLUMNS
 
 
 class StreamingTests(unittest.TestCase):
+    def test_stream_command_allows_omitting_microseismic_directory(self):
+        from rockburst.__main__ import parser
+        args = parser().parse_args(["stream", "--continuous-dir", "continuous", "--model", "model.json"])
+        self.assertIsNone(args.microseismic_dir)
+
     def test_one_hour_replay_advances_by_each_bin_and_keeps_future_events_out(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -57,6 +62,7 @@ class StreamingTests(unittest.TestCase):
     def test_file_step_dataset_keeps_milliseconds(self):
         class Fixture:
             zone, signature = "z", "test"
+            microseismic_enabled = False
 
             def label(self, now):
                 return np.zeros(3), np.ones(3, dtype=bool), "", ""
@@ -75,6 +81,7 @@ class StreamingTests(unittest.TestCase):
                 meta = json.loads(str(pack["metadata"]))
             self.assertEqual(meta["sample_step"], "bin_file")
             self.assertEqual(meta["refresh_seconds"], 30)
+            self.assertFalse(meta["microseismic_enabled"])
 
 
 if __name__ == "__main__":

@@ -76,6 +76,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(args.history_minutes, 30)
         self.assertFalse(hasattr(args, "coverage"))
 
+    def test_run_accepts_missing_microseismic_directory(self):
+        args = parser().parse_args(["run", "--continuous-dir", "continuous",
+                                    "--labels", "rockbursts.txt"])
+        self.assertIsNone(args.microseismic_dir)
+
 
 if __name__ == "__main__":
     unittest.main()

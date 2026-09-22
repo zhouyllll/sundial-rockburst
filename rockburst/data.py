@@ -33,10 +33,11 @@ def merge_intervals(intervals):
 
 class Inputs:
     @classmethod
-    def from_stream(cls, continuous_rows, event_rows, zone, now):
+    def from_stream(cls, continuous_rows, event_rows, zone, now, microseismic_enabled=True):
         """Build an inference view of the bounded buffers; no future labels needed."""
         obj = cls.__new__(cls)
         obj.zone = zone
+        obj.microseismic_enabled = microseismic_enabled
         signatures = {r["preprocessing_id"] for r in continuous_rows}
         if len(signatures) != 1:
             raise Unavailable("continuous_history_incomplete")
@@ -47,12 +48,15 @@ class Inputs:
         obj.events = sorted((cls._feature(r) for r in event_rows), key=lambda r: r["start"])
         obj.event_starts = [r["start"] for r in obj.events]
         obj.ends = sorted(obj.blocks)
-        obj.coverage = {"event_archive_complete": [(now - 86400, now)], "rockburst_record_complete": []}
+        obj.coverage = {"event_archive_complete": [(now - 86400, now)] if microseismic_enabled else [],
+                        "rockburst_record_complete": []}
         obj.bursts, obj.onsets = [], []
         return obj
 
-    def __init__(self, continuous, events, coverage, zone, rockbursts=None):
+    def __init__(self, continuous, events, coverage, zone, rockbursts=None,
+                 microseismic_enabled=True):
         self.zone = zone
+        self.microseismic_enabled = microseismic_enabled
         self.blocks = {}
         signatures = set()
         for row in read_csv(continuous, CONT_COLUMNS):
@@ -136,7 +140,7 @@ class Inputs:
             raise ValueError("基础版 history_minutes 只支持30或60")
         if not 0 <= max_lag_seconds <= 60:
             raise ValueError("基础版最多允许60秒输入延迟")
-        if not self.covered(now - 86400, now, "event_archive_complete"):
+        if self.microseismic_enabled and not self.covered(now - 86400, now, "event_archive_complete"):
             raise Unavailable("event_history_incomplete")
         cutoff = None
         latest = math.floor(now / 10) * 10
@@ -233,6 +237,7 @@ def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, ma
     metadata = dict(schema=1, feature_names=FEATURE_NAMES, zone_id=inputs.zone,
                     preprocessing_id=inputs.signature, history_minutes=history_minutes,
                     max_lag_seconds=max_lag_seconds, forecast=forecaster.identity,
+                    microseismic_enabled=getattr(inputs, "microseismic_enabled", True),
                     start=iso(start), end=iso(end), sample_step="bin_file" if by_file else "minute",
                     refresh_seconds=float(np.median(np.diff(schedule))) if len(schedule) > 1 else 30.)
     from pathlib import Path

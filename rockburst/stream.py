@@ -10,7 +10,7 @@ from .extract import CONT_COLUMNS, extract, load_manifest, read_segment, wavefor
 from .forecast import Forecaster
 from .io import iso, timestamp, read_csv, read_json, write_csv, write_json
 from .model import probabilities
-from .workflow import scan_bins, MANIFEST_COLUMNS, EVENT_MANIFEST_COLUMNS
+from .workflow import scan_bins, scan_optional_bins, MANIFEST_COLUMNS, EVENT_MANIFEST_COLUMNS
 
 
 def replay_stream(continuous_dir, microseismic_dir, model_file, output, model_path=None,
@@ -27,7 +27,10 @@ def replay_stream(continuous_dir, microseismic_dir, model_file, output, model_pa
     root = Path(output)
     root.mkdir(parents=True, exist_ok=True)
     continuous = scan_bins(continuous_dir, zone, timezone)
-    micro = scan_bins(microseismic_dir, zone, timezone, event_clips=True)
+    microseismic_enabled = bool(meta.get("microseismic_enabled", True))
+    if microseismic_enabled != bool(microseismic_dir):
+        raise ValueError("流式预测的微震目录配置必须与训练模型一致（训练时有目录就提供，没有就省略）")
+    micro = scan_optional_bins(microseismic_dir, zone, timezone, event_clips=True)
     if not continuous:
         raise ValueError("连续bin目录为空")
     write_csv(root / "microseismic_manifest.csv", micro, EVENT_MANIFEST_COLUMNS)
@@ -80,7 +83,7 @@ def replay_stream(continuous_dir, microseismic_dir, model_file, output, model_pa
             result = dict(time=iso(now), zone_id=zone, status="ok", backend=meta["forecast"]["backend"],
                           experimental=True, calibration=model["calibration"])
             try:
-                view = Inputs.from_stream(list(buffer.values()), events, zone, now)
+                view = Inputs.from_stream(list(buffer.values()), events, zone, now, microseismic_enabled)
                 x, quality = view.sample(now, forecast, 30, meta["max_lag_seconds"])
                 p = probabilities(x[None], model)[0]
                 result.update(p_5min=float(p[0]), p_10min=float(p[1]), p_30min=float(p[2]), quality=quality)

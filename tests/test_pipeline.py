@@ -101,6 +101,14 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(Unavailable, "event_history_incomplete"):
             self.inputs().sample(self.now, Forecaster())
 
+    def test_disabled_microseismic_branch_does_not_require_archive_coverage(self):
+        self.coverage[0]["event_archive_complete"] = 0
+        data = self.inputs()
+        data.microseismic_enabled = False
+        x, quality = data.sample(self.now, Forecaster())
+        self.assertEqual(quality["microseismic_count_24h"], 0)
+        self.assertEqual(x.shape, (3, 6))
+
     def test_incomplete_future_is_not_negative(self):
         self.coverage[0]["rockburst_record_complete"] = 0
         with self.assertRaisesRegex(Unavailable, "future_labels_incomplete"):
