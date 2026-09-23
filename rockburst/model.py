@@ -21,7 +21,7 @@ def probabilities(x, model):
     return 1 - np.cumprod(1 - expit(logits), axis=1)
 
 
-def fit_hazard(x, y, mask, ridge):
+def fit_hazard(x, y, mask, ridge, sample_weights=None):
     if ridge <= 0 or not np.isfinite(ridge):
         raise ValueError("ridge 必须是有限正数")
     for j in range(3):
@@ -36,7 +36,12 @@ def fit_hazard(x, y, mask, ridge):
     for j in range(3):
         rate = y[mask[:, j], j].mean()
         initial[j] = np.log(rate / (1 - rate))
-    weight = mask.astype(float) / len(x)
+    if sample_weights is None:
+        sample_weights = np.ones(len(x), dtype=np.float64)
+    sample_weights = np.asarray(sample_weights, dtype=np.float64)
+    if sample_weights.shape != (len(x),) or not np.isfinite(sample_weights).all() or np.any(sample_weights <= 0):
+        raise ValueError("sample_weights必须是长度等于样本数的有限正数")
+    weight = mask.astype(float) * sample_weights[:, None] / np.sum(sample_weights)
 
     def objective(theta):
         intercepts, beta = theta[:3], theta[3:]
@@ -53,6 +58,22 @@ def fit_hazard(x, y, mask, ridge):
     return dict(mean=mean.tolist(), scale=scale.tolist(), intercepts=result.x[:3].tolist(),
                 beta=result.x[3:].tolist(), ridge=float(ridge), objective=float(result.fun),
                 iterations=int(result.nit))
+
+
+def event_balanced_weights(y, event_ids):
+    """Give each positive event equal total weight while retaining all samples."""
+    event_ids = np.asarray(event_ids)
+    weights = np.ones(len(y), dtype=np.float64)
+    positive = np.any(np.asarray(y, dtype=bool), axis=1)
+    events = sorted({str(v) for v in event_ids[positive] if str(v)})
+    if not events:
+        return weights, 0
+    negative_count = max(int(np.sum(~positive)), 1)
+    per_event = negative_count / len(events)
+    for event in events:
+        members = positive & (event_ids.astype(str) == event)
+        weights[members] = per_event / max(int(np.sum(members)), 1)
+    return weights, len(events)
 
 
 def average_precision(y, p):
@@ -126,7 +147,7 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
 
 
 def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), threshold=.5,
-          feature_indices=None, feature_variant=None):
+          feature_indices=None, feature_variant=None, event_balanced=False):
     if train_end >= validation_end or not 0 < threshold < 1:
         raise ValueError("划分时间或报警阈值无效")
     with np.load(dataset, allow_pickle=False) as pack:
@@ -163,9 +184,11 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
     tr, va, te = (splits[k] for k in ["train", "validation", "test"])
     if not np.any(y[va]):
         raise ValueError("验证集没有岩爆正例，无法选择模型；请调整时间边界")
+    sample_weights, balanced_events = event_balanced_weights(y[tr], event_ids[tr]) if event_balanced else (
+        np.ones(np.sum(tr), dtype=np.float64), 0)
     candidates = []
     for ridge in ridges:
-        model = fit_hazard(x[tr], y[tr], mask[tr], float(ridge))
+        model = fit_hazard(x[tr], y[tr], mask[tr], float(ridge), sample_weights)
         validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model, threshold, refresh)
         score = np.mean([v["brier"] for v in validation["horizons"].values()])
         candidates.append((float(score), model))
@@ -175,12 +198,14 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
                  calibration="not_independently_calibrated", train_end=iso(train_end),
                  validation_end=iso(validation_end),
                  feature_variant=feature_variant,
+                 event_balanced=bool(event_balanced), balanced_training_events=int(balanced_events),
                  parameter_count=3 + len(selected_features), experimental=True)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     write_json(output / "model.json", model)
     report = dict(backend=metadata["forecast"], calibration=model["calibration"],
                   feature_variant=feature_variant, feature_names=selected_features,
+                  event_balanced=bool(event_balanced), balanced_training_events=int(balanced_events),
                   selected_ridge=model["ridge"], candidates=[dict(ridge=m["ridge"], validation_brier=s)
                                                             for s, m in candidates],
                   purged_samples=int(np.sum(~(tr | va | te))), splits={},

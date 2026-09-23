@@ -43,6 +43,8 @@ def parser():
     p.add_argument("--monitor", default="all")
     p.add_argument("--ridge", type=float, default=1.)
     p.add_argument("--threshold", type=float, default=.5)
+    p.add_argument("--event-balanced", action="store_true",
+                   help="按岩爆事件均衡训练正样本权重，减少相邻负样本压低概率")
     p.add_argument("--transient-ablation", action="store_true",
                    help="附加短时峰值/峰均比/STA-LTA/100ms能量分位数/阈值计数受控对照")
     add_forecaster(p, default="sundial")
@@ -111,7 +113,7 @@ def main(argv=None):
                                   args.output, args.backend, args.model_path, args.device,
                                   args.samples, args.cache, args.zone, args.timezone,
                                   args.history_minutes, args.monitor, args.ridge, args.threshold,
-                                  args.transient_ablation)
+                                  args.transient_ablation, args.event_balanced)
         elif args.command == "stream":
             from .stream import replay_stream
             result = replay_stream(args.continuous_dir, args.microseismic_dir, args.model,

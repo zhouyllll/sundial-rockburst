@@ -34,3 +34,32 @@
 4. 保持按记录文件夹分组的训练/验证/测试划分；测试事件数量增加前，所有结果都标记为探索性结果。
 5. 另做“去掉 Sundial 预测特征”的对照，区分 Sundial 的平均趋势预测贡献和瞬态特征贡献。
 
+## 2026-09-23：事件均衡训练与模型说明
+
+### 问题判断
+
+当前所有方案的正负概率集中在约 `0.32～0.40`，说明单纯降低报警阈值会造成长时间报警，升高阈值又会漏掉事件。这个问题不能用简单阈值解决，优先检查训练样本权重和正负样本的相关性。
+
+### 代码修改
+
+- `rockburst/model.py` 增加 `event_balanced_weights`：让训练集每个岩爆事件的正样本总权重相近，同时保留所有原始样本。
+- `fit_hazard` 支持样本权重；原有训练方式保持兼容。
+- `run` 增加 `--event-balanced`，用于与原模型做受控对照。
+- 模型和报告保存 `event_balanced`、`balanced_training_events` 元数据。
+- README 解释当前模型是三时窗离散时间风险模型，报警阈值只负责把概率转换成报警状态，并非特征硬阈值。
+
+### 下一次实验命令
+
+```bash
+python -m rockburst run \
+  --continuous-dir data/continuous \
+  --microseismic-dir data/microseismic \
+  --labels data/rockbursts.txt \
+  --model-path models/sundial-base-128m \
+  --device cuda \
+  --output artifacts/event_balanced \
+  --transient-ablation \
+  --event-balanced
+```
+
+比较重点是原方案与事件均衡方案在验证集上的概率分离、阈值扫描和事件级提前量；不能只根据测试集 AP 选择方案。
