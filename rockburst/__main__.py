@@ -45,6 +45,12 @@ def parser():
     p.add_argument("--threshold", type=float, default=.5)
     p.add_argument("--event-balanced", action="store_true",
                    help="按岩爆事件均衡训练正样本权重，减少相邻负样本压低概率")
+    p.add_argument("--auto-threshold", action="store_true",
+                   help="仅用验证集选择报警阈值，优先限制孤立误报")
+    p.add_argument("--max-isolated-false-alarms", type=int, default=2,
+                   help="自动选阈值时验证集允许的孤立误报段数")
+    p.add_argument("--min-active-bins", type=int, choices=[1, 2, 3], default=1,
+                   help="连续多少个bin超过阈值才形成报警段")
     p.add_argument("--transient-ablation", action="store_true",
                    help="附加短时峰值/峰均比/STA-LTA/100ms能量分位数/阈值计数受控对照")
     add_forecaster(p, default="sundial")
@@ -113,7 +119,9 @@ def main(argv=None):
                                   args.output, args.backend, args.model_path, args.device,
                                   args.samples, args.cache, args.zone, args.timezone,
                                   args.history_minutes, args.monitor, args.ridge, args.threshold,
-                                  args.transient_ablation, args.event_balanced)
+                                  args.transient_ablation, args.event_balanced,
+                                  args.auto_threshold, args.max_isolated_false_alarms,
+                                  args.min_active_bins)
         elif args.command == "stream":
             from .stream import replay_stream
             result = replay_stream(args.continuous_dir, args.microseismic_dir, args.model,

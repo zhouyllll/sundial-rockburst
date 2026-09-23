@@ -89,7 +89,7 @@ def average_precision(y, p):
 
 
 def threshold_sweep(y, scores, times, event_ids, refresh_seconds=60., thresholds=None,
-                    horizon_seconds=None, event_onsets=None):
+                    horizon_seconds=None, event_onsets=None, min_active_bins=1):
     """Return event-aware alarm diagnostics without changing the fitted probabilities."""
     if thresholds is None:
         thresholds = (.05, .10, .15, .20, .25, .30, .40, .50, .60, .70, .80, .90)
@@ -102,6 +102,9 @@ def threshold_sweep(y, scores, times, event_ids, refresh_seconds=60., thresholds
         active = scores >= threshold
         starts = np.flatnonzero(active & np.r_[True, (~active[:-1]) |
                           ~np.isclose(np.diff(times), refresh_seconds, atol=.02)])
+        if min_active_bins > 1:
+            starts = np.array([k for k in starts if np.all(active[k:k + min_active_bins]) and
+                               len(active[k:k + min_active_bins]) == min_active_bins], dtype=int)
         eligible = {str(v) for v in event_ids[y] if v}
         detected = {str(event_ids[k]) for k in starts if y[k] and event_ids[k]}
         false_alarms = sum(not y[k] for k in starts)
@@ -129,7 +132,8 @@ def threshold_sweep(y, scores, times, event_ids, refresh_seconds=60., thresholds
     return rows
 
 
-def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60., event_onsets=None):
+def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60., event_onsets=None,
+             min_active_bins=1):
     p = probabilities(x, model)
     truth = np.cumsum(y, axis=1) > 0
     results = {}
@@ -138,6 +142,9 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
         active = scores >= threshold
         starts = np.flatnonzero(active & np.r_[True, (~active[:-1]) |
                     ~np.isclose(np.diff(times), refresh_seconds, atol=.02)])
+        if min_active_bins > 1:
+            starts = np.array([k for k in starts if np.all(active[k:k + min_active_bins]) and
+                               len(active[k:k + min_active_bins]) == min_active_bins], dtype=int)
         matched = {str(event_ids[k]) for k in starts if target[k] and event_ids[k]}
         eligible_events = {str(v) for v in event_ids[target] if v}
         false_alarms = sum(not target[k] for k in starts)
@@ -173,15 +180,29 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
             positive_max_probability=float(np.max(scores[target])) if np.any(target) else None,
             negative_max_probability=float(np.max(scores[~target])) if np.any(~target) else None,
                 threshold_sweep=threshold_sweep(target, scores, times, event_ids, refresh_seconds,
-                                                horizon_seconds=HORIZONS[j], event_onsets=event_onsets),
+                                                horizon_seconds=HORIZONS[j], event_onsets=event_onsets,
+                                                min_active_bins=min_active_bins),
         )
     return dict(samples=len(x), evaluated_hours=len(x) * refresh_seconds / 3600,
                 nominal_step_seconds=refresh_seconds,
                 threshold=threshold, horizons=results), p
 
 
+def select_operating_threshold(validation, max_isolated_false_alarms=2):
+    """Select a threshold using validation only, prioritizing low isolated alarms."""
+    rows = validation["horizons"]["30min"]["threshold_sweep"]
+    feasible = [r for r in rows if r["isolated_false_alarm_episodes"] <= max_isolated_false_alarms]
+    pool = feasible or rows
+    chosen = max(pool, key=lambda r: (r["event_recall"] if r["event_recall"] is not None else -1.,
+                                      -r["isolated_false_alarm_episodes"], r["threshold"]))
+    return float(chosen["threshold"]), dict(rule="max_30min_event_recall_under_isolated_alarm_limit",
+                                              max_isolated_false_alarms=int(max_isolated_false_alarms),
+                                              feasible=bool(feasible), selected=chosen)
+
+
 def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), threshold=.5,
-          feature_indices=None, feature_variant=None, event_balanced=False):
+          feature_indices=None, feature_variant=None, event_balanced=False,
+          auto_threshold=False, max_isolated_false_alarms=2, min_active_bins=1):
     if train_end >= validation_end or not 0 < threshold < 1:
         raise ValueError("划分时间或报警阈值无效")
     with np.load(dataset, allow_pickle=False) as pack:
@@ -225,16 +246,23 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
     for ridge in ridges:
         model = fit_hazard(x[tr], y[tr], mask[tr], float(ridge), sample_weights)
         validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model, threshold, refresh,
-                                 event_onsets[va])
+                                 event_onsets[va], min_active_bins)
         score = np.mean([v["brier"] for v in validation["horizons"].values()])
         candidates.append((float(score), model))
     _, model = min(candidates, key=lambda item: item[0])
+    validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model, threshold, refresh,
+                             event_onsets[va], min_active_bins)
+    threshold_selection = None
+    if auto_threshold:
+        threshold, threshold_selection = select_operating_threshold(validation, max_isolated_false_alarms)
     # Do not refit on validation: the final test evaluates exactly the selected fit.
     model.update(schema=1, metadata=model_metadata, threshold=float(threshold),
                  calibration="not_independently_calibrated", train_end=iso(train_end),
                  validation_end=iso(validation_end),
                  feature_variant=feature_variant,
                  event_balanced=bool(event_balanced), balanced_training_events=int(balanced_events),
+                 auto_threshold=bool(auto_threshold), min_active_bins=int(min_active_bins),
+                 threshold_selection=threshold_selection,
                  parameter_count=3 + len(selected_features), experimental=True)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -242,6 +270,8 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
     report = dict(backend=metadata["forecast"], calibration=model["calibration"],
                   feature_variant=feature_variant, feature_names=selected_features,
                   event_balanced=bool(event_balanced), balanced_training_events=int(balanced_events),
+                  auto_threshold=bool(auto_threshold), min_active_bins=int(min_active_bins),
+                  threshold_selection=threshold_selection,
                   selected_ridge=model["ridge"], candidates=[dict(ridge=m["ridge"], validation_brier=s)
                                                             for s, m in candidates],
                   purged_samples=int(np.sum(~(tr | va | te))), splits={},
@@ -249,7 +279,8 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
                   limitation="实验性结果；相邻样本相关。未进行独立概率校准或置信区间估计。测试只评估有完整输入的时刻；时长按名义步长估算。")
     for name, selected in splits.items():
         metrics, p = evaluate(x[selected], y[selected], mask[selected], times[selected],
-                              event_ids[selected], model, threshold, refresh, event_onsets[selected])
+                              event_ids[selected], model, threshold, refresh, event_onsets[selected],
+                              min_active_bins)
         metrics.update(independent_events=len(set(event_ids[selected]) - {""}),
                        independent_groups=len(group_sets[name]),
                        start=iso(times[selected][0]), end=iso(times[selected][-1]))

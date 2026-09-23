@@ -232,6 +232,14 @@ python -m rockburst run ... --transient-ablation --event-balanced
 
 该选项不会丢弃样本，而是让训练集中每个岩爆事件的正样本总权重相近，避免大量相邻正常窗口主导损失函数。它只改变训练权重，验证集和测试集仍保持原始分布。
 
+可以让程序只用验证集自动选择报警阈值，并要求连续两个bin超过阈值才触发报警：
+
+```bash
+python -m rockburst run ... --event-balanced --auto-threshold --min-active-bins 2
+```
+
+阈值选择优先满足验证集孤立误报段数不超过`--max-isolated-false-alarms`（默认2），再最大化30分钟事件检出率。选出的阈值会写入`model.json`，测试集不会参与选择。
+
 短窗以100毫秒为窗长、50毫秒步长；超阈值按每个10秒块的短窗能量中位数加3倍稳健标准差计算。新增特征只从预测时刻以前已经可用的数据计算，不使用未来波形。要捕捉亚秒变化，需用原始bin重新提取特征；旧版`continuous.csv`没有新增短窗列。
 
 结果在`artifacts/transient_ablation/ablation/`：`comparison.csv`按验证集/测试集列出三个预测时窗的AP、Brier、事件检出率及检出/可检事件数；`summary.json`会按**验证集30分钟AP**给出`recommended_variant`，测试集只作最终一次评估；每个方案的独立子目录保留模型、指标和预测明细。每个`metrics.json`还包含各时窗的最大概率、正负样本最大概率和阈值扫描表。事件检出率按`--threshold`（默认0.5）计算；若AP提高但0.5阈值检出为0，应根据验证集阈值扫描选择现场阈值，再锁定后评估测试集。由于这里只使用少量岩爆事件，多个对照共享测试集的结果属于探索性比较，不能当成独立重复实验或已验证的现场预警性能。

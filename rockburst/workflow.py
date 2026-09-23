@@ -214,7 +214,8 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
                  model_path=None, device="cpu", samples=20, cache=None,
                  zone="zone_A", timezone="Asia/Shanghai", history_minutes=30,
                  monitor="all", ridge=1., threshold=.5, transient_ablation=False,
-                 event_balanced=False):
+                 event_balanced=False, auto_threshold=False,
+                 max_isolated_false_alarms=2, min_active_bins=1):
     root = Path(output)
     root.mkdir(parents=True, exist_ok=True)
     print("[1/5] 扫描bin文件名，自动生成内部索引和岩爆标签", flush=True)
@@ -284,7 +285,10 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
     baseline_indices = list(range(len(FEATURE_NAMES)))
     report = train(root / "dataset.npz", root / "run", train_end, validation_end,
                    ridges=[ridge], threshold=threshold, feature_indices=baseline_indices,
-                   feature_variant="baseline", event_balanced=event_balanced)
+                   feature_variant="baseline", event_balanced=event_balanced,
+                   auto_threshold=auto_threshold,
+                   max_isolated_false_alarms=max_isolated_false_alarms,
+                   min_active_bins=min_active_bins)
     report["split_unit"] = split_unit
     write_json(root / "run" / "metrics.json", report)
 
@@ -305,7 +309,9 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
             variant_report = train(root / "dataset.npz", ablation_root / variant,
                                    train_end, validation_end, ridges=[ridge], threshold=threshold,
                                    feature_indices=indices, feature_variant=variant,
-                                   event_balanced=event_balanced)
+                                   event_balanced=event_balanced, auto_threshold=auto_threshold,
+                                   max_isolated_false_alarms=max_isolated_false_alarms,
+                                   min_active_bins=min_active_bins)
             variant_report["split_unit"] = split_unit
             write_json(ablation_root / variant / "metrics.json", variant_report)
             reports[variant] = variant_report
@@ -332,7 +338,8 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
                                    if validation_30[name] is not None else -1.)
         write_json(ablation_root / "summary.json", dict(
             split_unit=split_unit, threshold=threshold, history_minutes=history_minutes,
-            event_balanced=bool(event_balanced),
+            event_balanced=bool(event_balanced), auto_threshold=bool(auto_threshold),
+            max_isolated_false_alarms=int(max_isolated_false_alarms), min_active_bins=int(min_active_bins),
             step_seconds=float(np.median(np.diff(times))) if len(times) > 1 else None,
             variants=list(variants), comparisons=comparison,
             selection_rule="按验证集30分钟AP选择推荐方案；测试集只作最终一次评估",
