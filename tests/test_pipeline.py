@@ -9,7 +9,7 @@ from rockburst.data import Inputs, Unavailable, HORIZONS
 from rockburst.extract import extract, CONT_COLUMNS, EVENT_COLUMNS
 from rockburst.forecast import Forecaster
 from rockburst.io import iso, timestamp, write_csv, read_csv
-from rockburst.model import fit_hazard, probabilities, average_precision, train
+from rockburst.model import fit_hazard, probabilities, average_precision, threshold_sweep, train
 from rockburst.data import FEATURE_NAMES, TRANSIENT_FEATURE_NAMES, select_model_features
 
 
@@ -338,6 +338,18 @@ class SplitTests(unittest.TestCase):
             path, origin, *_ = self.make_dataset(root, conflicting_groups=True)
             with self.assertRaisesRegex(ValueError, "同一岩爆群"):
                 train(path, root / "run", origin + 100 * 60, origin + 200 * 60)
+
+    def test_threshold_sweep_reports_event_and_alarm_diagnostics(self):
+        rows = threshold_sweep(
+            np.array([False, True, True, False]),
+            np.array([.1, .4, .7, .2]),
+            np.array([0., 30., 60., 90.]),
+            np.array(["", "event-1", "event-1", ""]),
+            refresh_seconds=30., thresholds=[.2, .5])
+        self.assertEqual([r["threshold"] for r in rows], [.2, .5])
+        self.assertEqual(rows[0]["eligible_events"], 1)
+        self.assertEqual(rows[1]["detected_events"], 1)
+        self.assertIn("false_alarms_per_24h_evaluated", rows[0])
 
 
 if __name__ == "__main__":

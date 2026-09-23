@@ -322,11 +322,19 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
         write_csv(ablation_root / "comparison.csv", comparison,
                   ["variant", "split", "horizon", "average_precision", "brier", "event_recall",
                    "detected_events", "eligible_events", "samples", "independent_groups", "feature_names"])
+        validation_30 = {
+            variant: reports[variant]["splits"]["validation"]["horizons"]["30min"]["average_precision"]
+            for variant in reports
+        }
+        recommended_variant = max(validation_30, key=lambda name: validation_30[name]
+                                   if validation_30[name] is not None else -1.)
         write_json(ablation_root / "summary.json", dict(
             split_unit=split_unit, threshold=threshold, history_minutes=history_minutes,
             step_seconds=float(np.median(np.diff(times))) if len(times) > 1 else None,
             variants=list(variants), comparisons=comparison,
-            warning="多种特征方案复用同一测试集；结果用于探索消融，最终效果需用新独立记录复核。"))
+            selection_rule="按验证集30分钟AP选择推荐方案；测试集只作最终一次评估",
+            validation_30min_ap=validation_30, recommended_variant=recommended_variant,
+            warning="多种特征方案复用同一测试集；不能根据测试集挑选方案，最终效果需用新独立记录复核。"))
 
     print("[5/5] 保存模型、测试报告和最新一次预测", flush=True)
     from .io import read_json

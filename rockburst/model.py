@@ -67,6 +67,31 @@ def average_precision(y, p):
     return float(np.sum(np.diff(np.r_[0., recall]) * precision))
 
 
+def threshold_sweep(y, scores, times, event_ids, refresh_seconds=60., thresholds=None):
+    """Return event-aware alarm diagnostics without changing the fitted probabilities."""
+    if thresholds is None:
+        thresholds = (.05, .10, .15, .20, .25, .30, .40, .50, .60, .70, .80, .90)
+    y = np.asarray(y, dtype=bool)
+    scores = np.asarray(scores, dtype=float)
+    times = np.asarray(times, dtype=float)
+    event_ids = np.asarray(event_ids)
+    rows = []
+    for threshold in thresholds:
+        active = scores >= threshold
+        starts = np.flatnonzero(active & np.r_[True, (~active[:-1]) |
+                          ~np.isclose(np.diff(times), refresh_seconds, atol=.02)])
+        eligible = {str(v) for v in event_ids[y] if v}
+        detected = {str(event_ids[k]) for k in starts if y[k] and event_ids[k]}
+        false_alarms = sum(not y[k] for k in starts)
+        rows.append(dict(threshold=float(threshold), event_recall=(len(detected) / len(eligible)
+                    if eligible else None), detected_events=len(detected), eligible_events=len(eligible),
+                    alarm_episodes=len(starts), false_alarm_episodes=int(false_alarms),
+                    false_alarms_per_24h_evaluated=float(false_alarms /
+                        (len(times) * refresh_seconds / 86400)) if len(times) else None,
+                    alarm_time_fraction=float(active.mean()) if len(active) else None))
+    return rows
+
+
 def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.):
     p = probabilities(x, model)
     truth = np.cumsum(y, axis=1) > 0
@@ -90,6 +115,10 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
             false_alarms_per_24h_evaluated=float(false_alarms / (len(times) * refresh_seconds / 86400)),
             eligible_events=len(eligible_events), detected_events=len(matched),
             event_recall=len(matched) / len(eligible_events) if eligible_events else None,
+            max_probability=float(np.max(scores)) if len(scores) else None,
+            positive_max_probability=float(np.max(scores[target])) if np.any(target) else None,
+            negative_max_probability=float(np.max(scores[~target])) if np.any(~target) else None,
+            threshold_sweep=threshold_sweep(target, scores, times, event_ids, refresh_seconds),
         )
     return dict(samples=len(x), evaluated_hours=len(x) * refresh_seconds / 3600,
                 nominal_step_seconds=refresh_seconds,
