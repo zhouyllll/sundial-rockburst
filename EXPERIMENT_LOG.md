@@ -71,7 +71,9 @@ python -m rockburst run \
 本次评估调整：
 
 - 保留严格的 `false_alarm_episodes`，保证历史指标可比较。
-- 新增 `boundary_near_event_episodes`：告警前后相邻一个bin存在同一事件正样本的边界告警。
+- 数据集保存每个样本对应事件的真实 `onset_time`，按预测窗口结束时间与 onset 的实际距离判断边界告警，不再依赖相邻样本作为唯一依据。
+- 新增 `boundary_near_event_episodes`：事件 onset 刚好落在预测窗口边界容差内的告警。
+- 新增 `post_event_carryover_episodes`：事件发生后一个刷新间隔内仍持续的告警。
 - 新增 `isolated_false_alarm_episodes` 和对应的24小时换算速率，表示真正与事件无关的孤立误报。
 - 阈值扫描表同步输出上述拆分结果。
 

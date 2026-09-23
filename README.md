@@ -238,7 +238,7 @@ python -m rockburst run ... --transient-ablation --event-balanced
 
 阈值扫描不会修改模型概率，只用于诊断不同报警阈值下的事件检出率、误报次数和报警时长。不能根据测试集的最佳阈值或最佳特征方案反复调参；最终报告应保留验证集选择过程和一次性的测试集结果。AP是排序指标，不是概率百分比；阈值0.5下`0/3`表示没有测试事件触发报警，不表示AP等于零。
 
-评估还会把紧邻真实事件的边界告警单独列出：如果告警前后相邻一个预测bin中有同一事件的正样本，它会计入`boundary_near_event_episodes`，不会计入`isolated_false_alarm_episodes`。严格误报仍保留在`false_alarm_episodes`中，便于同时查看标签边界和实际孤立误报。
+评估会使用数据集保存的真实`onset_time`区分告警类型：预测窗口刚好越过 onset 的告警计入`boundary_near_event_episodes`，事件发生后一个刷新间隔内的告警计入`post_event_carryover_episodes`，只有与事件时间无关的告警才计入`isolated_false_alarm_episodes`。严格误报仍保留在`false_alarm_episodes`中。边界容差取预测刷新间隔，而不是把所有情况粗略固定成一个bin。
 
 ## 8. 当前概率模型如何工作
 

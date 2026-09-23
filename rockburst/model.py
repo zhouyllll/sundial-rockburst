@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy.special import expit
 
-from .data import FEATURE_NAMES
+from .data import FEATURE_NAMES, HORIZONS
 from .io import iso, write_csv, write_json
 
 
@@ -88,7 +88,8 @@ def average_precision(y, p):
     return float(np.sum(np.diff(np.r_[0., recall]) * precision))
 
 
-def threshold_sweep(y, scores, times, event_ids, refresh_seconds=60., thresholds=None):
+def threshold_sweep(y, scores, times, event_ids, refresh_seconds=60., thresholds=None,
+                    horizon_seconds=None, event_onsets=None):
     """Return event-aware alarm diagnostics without changing the fitted probabilities."""
     if thresholds is None:
         thresholds = (.05, .10, .15, .20, .25, .30, .40, .50, .60, .70, .80, .90)
@@ -105,28 +106,30 @@ def threshold_sweep(y, scores, times, event_ids, refresh_seconds=60., thresholds
         detected = {str(event_ids[k]) for k in starts if y[k] and event_ids[k]}
         false_alarms = sum(not y[k] for k in starts)
         boundary = 0
+        post_event = 0
         for k in starts:
             if y[k]:
                 continue
-            neighbors = []
-            if k > 0 and y[k - 1] and event_ids[k - 1]:
-                neighbors.append(str(event_ids[k - 1]))
-            if k + 1 < len(y) and y[k + 1] and event_ids[k + 1]:
-                neighbors.append(str(event_ids[k + 1]))
-            if neighbors:
+            onset_values = [] if event_onsets is None else event_onsets[np.isfinite(event_onsets)]
+            distances = onset_values - times[k] if len(onset_values) else np.array([])
+            if horizon_seconds is not None and np.any((distances > horizon_seconds) &
+                                                       (distances <= horizon_seconds + refresh_seconds)):
                 boundary += 1
-        isolated = false_alarms - boundary
+            elif len(onset_values) and np.any((distances <= 0.) & (distances >= -refresh_seconds)):
+                post_event += 1
+        isolated = false_alarms - boundary - post_event
         rows.append(dict(threshold=float(threshold), event_recall=(len(detected) / len(eligible)
                     if eligible else None), detected_events=len(detected), eligible_events=len(eligible),
                     alarm_episodes=len(starts), false_alarm_episodes=int(false_alarms),
                     boundary_near_event_episodes=int(boundary), isolated_false_alarm_episodes=int(isolated),
+                    post_event_carryover_episodes=int(post_event),
                     false_alarms_per_24h_evaluated=float(false_alarms /
                         (len(times) * refresh_seconds / 86400)) if len(times) else None,
                     alarm_time_fraction=float(active.mean()) if len(active) else None))
     return rows
 
 
-def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.):
+def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60., event_onsets=None):
     p = probabilities(x, model)
     truth = np.cumsum(y, axis=1) > 0
     results = {}
@@ -139,13 +142,17 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
         eligible_events = {str(v) for v in event_ids[target] if v}
         false_alarms = sum(not target[k] for k in starts)
         boundary = 0
+        post_event = 0
         for k in starts:
             if target[k]:
                 continue
-            if ((k > 0 and target[k - 1] and event_ids[k - 1]) or
-                    (k + 1 < len(target) and target[k + 1] and event_ids[k + 1])):
+            onset_values = [] if event_onsets is None else event_onsets[np.isfinite(event_onsets)]
+            distances = onset_values - times[k] if len(onset_values) else np.array([])
+            if np.any((distances > HORIZONS[j]) & (distances <= HORIZONS[j] + refresh_seconds)):
                 boundary += 1
-        isolated_false_alarms = int(false_alarms - boundary)
+            elif np.any((distances <= 0.) & (distances >= -refresh_seconds)):
+                post_event += 1
+        isolated_false_alarms = int(false_alarms - boundary - post_event)
         clipped = np.clip(scores, 1e-12, 1 - 1e-12)
         results[f"{horizon}min"] = dict(
             brier=float(np.mean((scores - target) ** 2)),
@@ -155,6 +162,7 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
             alarm_time_fraction=float(active.mean()), alarm_episodes=len(starts),
             false_alarm_episodes=int(false_alarms),
             boundary_near_event_episodes=int(boundary),
+            post_event_carryover_episodes=int(post_event),
             isolated_false_alarm_episodes=isolated_false_alarms,
             false_alarms_per_24h_evaluated=float(false_alarms / (len(times) * refresh_seconds / 86400)),
             isolated_false_alarms_per_24h_evaluated=float(isolated_false_alarms /
@@ -164,7 +172,8 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
             max_probability=float(np.max(scores)) if len(scores) else None,
             positive_max_probability=float(np.max(scores[target])) if np.any(target) else None,
             negative_max_probability=float(np.max(scores[~target])) if np.any(~target) else None,
-            threshold_sweep=threshold_sweep(target, scores, times, event_ids, refresh_seconds),
+                threshold_sweep=threshold_sweep(target, scores, times, event_ids, refresh_seconds,
+                                                horizon_seconds=HORIZONS[j], event_onsets=event_onsets),
         )
     return dict(samples=len(x), evaluated_hours=len(x) * refresh_seconds / 3600,
                 nominal_step_seconds=refresh_seconds,
@@ -178,6 +187,7 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
     with np.load(dataset, allow_pickle=False) as pack:
         x, y, mask, times = (pack[k] for k in ["x", "y", "mask", "times"])
         event_ids, groups = pack["event_ids"], pack["groups"]
+        event_onsets = pack["event_onsets"] if "event_onsets" in pack.files else np.full(len(times), np.nan)
         metadata = json.loads(str(pack["metadata"]))
     refresh = metadata.get("refresh_seconds", 60.)
     dataset_feature_names = list(metadata["feature_names"])
@@ -214,7 +224,8 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
     candidates = []
     for ridge in ridges:
         model = fit_hazard(x[tr], y[tr], mask[tr], float(ridge), sample_weights)
-        validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model, threshold, refresh)
+        validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model, threshold, refresh,
+                                 event_onsets[va])
         score = np.mean([v["brier"] for v in validation["horizons"].values()])
         candidates.append((float(score), model))
     _, model = min(candidates, key=lambda item: item[0])
@@ -238,7 +249,7 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
                   limitation="实验性结果；相邻样本相关。未进行独立概率校准或置信区间估计。测试只评估有完整输入的时刻；时长按名义步长估算。")
     for name, selected in splits.items():
         metrics, p = evaluate(x[selected], y[selected], mask[selected], times[selected],
-                              event_ids[selected], model, threshold, refresh)
+                              event_ids[selected], model, threshold, refresh, event_onsets[selected])
         metrics.update(independent_events=len(set(event_ids[selected]) - {""}),
                        independent_groups=len(group_sets[name]),
                        start=iso(times[selected][0]), end=iso(times[selected][-1]))

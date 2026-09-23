@@ -345,7 +345,8 @@ class SplitTests(unittest.TestCase):
             np.array([.1, .4, .1, .3]),
             np.array([0., 30., 60., 90.]),
             np.array(["", "event-1", "event-1", ""]),
-            refresh_seconds=30., thresholds=[.2, .5])
+            refresh_seconds=30., thresholds=[.2, .5], horizon_seconds=60.,
+            event_onsets=np.array([np.nan, 180., 180., np.nan]))
         self.assertEqual([r["threshold"] for r in rows], [.2, .5])
         self.assertEqual(rows[0]["eligible_events"], 1)
         self.assertEqual(rows[0]["detected_events"], 1)

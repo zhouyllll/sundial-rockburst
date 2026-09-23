@@ -263,7 +263,9 @@ def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, ma
     by_file = prediction_times is not None
     schedule = (sorted({float(t) for t in prediction_times if start <= t < end}) if by_file
                 else list(range(round(start), round(end), 60)))
-    xs, ys, masks, times, event_ids, groups = [], [], [], [], [], []
+    xs, ys, masks, times, event_ids, event_onsets, groups = [], [], [], [], [], [], []
+    onset_by_id = {str(row["event_id"]): float(row["onset"])
+                   for row in getattr(inputs, "bursts", [])}
     skipped = Counter()
     for i, now in enumerate(schedule):
         try:
@@ -287,6 +289,7 @@ def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, ma
         masks.append(mask)
         times.append(now)
         event_ids.append(event_id)
+        event_onsets.append(onset_by_id.get(str(event_id), np.nan))
         groups.append(source_matches[0] if source_matches else group)
         if (i + 1) % 100 == 0:
             print(f"已扫描 {i + 1} 个预测时刻，有效 {len(xs)}", flush=True)
@@ -306,6 +309,7 @@ def build_dataset(inputs, forecaster, start, end, output, history_minutes=60, ma
     with path.open("wb") as stream:
         np.savez_compressed(stream, x=np.stack(xs), y=np.stack(ys), mask=np.stack(masks),
                             times=np.array(times, dtype=np.float64), event_ids=np.array(event_ids),
+                            event_onsets=np.array(event_onsets, dtype=np.float64),
                             groups=np.array(groups), metadata=json.dumps(metadata))
     report = dict(samples=len(xs), skipped=dict(skipped),
                   independent_events=len(set(event_ids) - {""}),
