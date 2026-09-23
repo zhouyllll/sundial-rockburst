@@ -104,9 +104,22 @@ def threshold_sweep(y, scores, times, event_ids, refresh_seconds=60., thresholds
         eligible = {str(v) for v in event_ids[y] if v}
         detected = {str(event_ids[k]) for k in starts if y[k] and event_ids[k]}
         false_alarms = sum(not y[k] for k in starts)
+        boundary = 0
+        for k in starts:
+            if y[k]:
+                continue
+            neighbors = []
+            if k > 0 and y[k - 1] and event_ids[k - 1]:
+                neighbors.append(str(event_ids[k - 1]))
+            if k + 1 < len(y) and y[k + 1] and event_ids[k + 1]:
+                neighbors.append(str(event_ids[k + 1]))
+            if neighbors:
+                boundary += 1
+        isolated = false_alarms - boundary
         rows.append(dict(threshold=float(threshold), event_recall=(len(detected) / len(eligible)
                     if eligible else None), detected_events=len(detected), eligible_events=len(eligible),
                     alarm_episodes=len(starts), false_alarm_episodes=int(false_alarms),
+                    boundary_near_event_episodes=int(boundary), isolated_false_alarm_episodes=int(isolated),
                     false_alarms_per_24h_evaluated=float(false_alarms /
                         (len(times) * refresh_seconds / 86400)) if len(times) else None,
                     alarm_time_fraction=float(active.mean()) if len(active) else None))
@@ -125,6 +138,14 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
         matched = {str(event_ids[k]) for k in starts if target[k] and event_ids[k]}
         eligible_events = {str(v) for v in event_ids[target] if v}
         false_alarms = sum(not target[k] for k in starts)
+        boundary = 0
+        for k in starts:
+            if target[k]:
+                continue
+            if ((k > 0 and target[k - 1] and event_ids[k - 1]) or
+                    (k + 1 < len(target) and target[k + 1] and event_ids[k + 1])):
+                boundary += 1
+        isolated_false_alarms = int(false_alarms - boundary)
         clipped = np.clip(scores, 1e-12, 1 - 1e-12)
         results[f"{horizon}min"] = dict(
             brier=float(np.mean((scores - target) ** 2)),
@@ -133,7 +154,11 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
             positive_samples=int(target.sum()), mean_probability=float(scores.mean()),
             alarm_time_fraction=float(active.mean()), alarm_episodes=len(starts),
             false_alarm_episodes=int(false_alarms),
+            boundary_near_event_episodes=int(boundary),
+            isolated_false_alarm_episodes=isolated_false_alarms,
             false_alarms_per_24h_evaluated=float(false_alarms / (len(times) * refresh_seconds / 86400)),
+            isolated_false_alarms_per_24h_evaluated=float(isolated_false_alarms /
+                (len(times) * refresh_seconds / 86400)),
             eligible_events=len(eligible_events), detected_events=len(matched),
             event_recall=len(matched) / len(eligible_events) if eligible_events else None,
             max_probability=float(np.max(scores)) if len(scores) else None,
