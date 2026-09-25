@@ -215,7 +215,7 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
                  zone="zone_A", timezone="Asia/Shanghai", history_minutes=30,
                  monitor="all", ridge=1., threshold=.5, transient_ablation=False,
                  event_balanced=False, auto_threshold=False,
-                 max_isolated_false_alarms=2, min_active_bins=1):
+                 max_isolated_false_alarms=2, min_validation_recall=.4, min_active_bins=1):
     root = Path(output)
     root.mkdir(parents=True, exist_ok=True)
     print("[1/5] 扫描bin文件名，自动生成内部索引和岩爆标签", flush=True)
@@ -288,6 +288,7 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
                    feature_variant="baseline", event_balanced=event_balanced,
                    auto_threshold=auto_threshold,
                    max_isolated_false_alarms=max_isolated_false_alarms,
+                   min_validation_recall=min_validation_recall,
                    min_active_bins=min_active_bins)
     report["split_unit"] = split_unit
     write_json(root / "run" / "metrics.json", report)
@@ -311,6 +312,7 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
                                    feature_indices=indices, feature_variant=variant,
                                    event_balanced=event_balanced, auto_threshold=auto_threshold,
                                    max_isolated_false_alarms=max_isolated_false_alarms,
+                                   min_validation_recall=min_validation_recall,
                                    min_active_bins=min_active_bins)
             variant_report["split_unit"] = split_unit
             write_json(ablation_root / variant / "metrics.json", variant_report)
@@ -340,6 +342,7 @@ def run_workflow(continuous_dir, microseismic_dir, labels, output, backend="sund
             split_unit=split_unit, threshold=threshold, history_minutes=history_minutes,
             event_balanced=bool(event_balanced), auto_threshold=bool(auto_threshold),
             max_isolated_false_alarms=int(max_isolated_false_alarms), min_active_bins=int(min_active_bins),
+            min_validation_recall=float(min_validation_recall),
             step_seconds=float(np.median(np.diff(times))) if len(times) > 1 else None,
             variants=list(variants), comparisons=comparison,
             selection_rule="按验证集30分钟AP选择推荐方案；测试集只作最终一次评估",

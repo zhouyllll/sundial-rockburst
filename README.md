@@ -238,7 +238,7 @@ python -m rockburst run ... --transient-ablation --event-balanced
 python -m rockburst run ... --event-balanced --auto-threshold --min-active-bins 2
 ```
 
-阈值选择优先满足验证集孤立误报段数不超过`--max-isolated-false-alarms`（默认2），再最大化30分钟事件检出率。选出的阈值会写入`model.json`，测试集不会参与选择。
+阈值选择要求验证集30分钟召回率至少达到`--min-validation-recall`（默认0.4），并优先满足孤立误报段数不超过`--max-isolated-false-alarms`（默认2）。如果没有任何阈值同时满足，模型会记录`no_operating_point`，不会把0.90等全静默阈值伪装成可用方案。选出的阈值会写入`model.json`，测试集不会参与选择。
 
 短窗以100毫秒为窗长、50毫秒步长；超阈值按每个10秒块的短窗能量中位数加3倍稳健标准差计算。新增特征只从预测时刻以前已经可用的数据计算，不使用未来波形。要捕捉亚秒变化，需用原始bin重新提取特征；旧版`continuous.csv`没有新增短窗列。
 

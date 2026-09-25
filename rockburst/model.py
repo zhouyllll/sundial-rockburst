@@ -188,21 +188,29 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
                 threshold=threshold, horizons=results), p
 
 
-def select_operating_threshold(validation, max_isolated_false_alarms=2):
-    """Select a threshold using validation only, prioritizing low isolated alarms."""
+def select_operating_threshold(validation, max_isolated_false_alarms=2, min_validation_recall=.4):
+    """Select a threshold using validation only; report no operating point honestly."""
     rows = validation["horizons"]["30min"]["threshold_sweep"]
-    feasible = [r for r in rows if r["isolated_false_alarm_episodes"] <= max_isolated_false_alarms]
-    pool = feasible or rows
-    chosen = max(pool, key=lambda r: (r["event_recall"] if r["event_recall"] is not None else -1.,
-                                      -r["isolated_false_alarm_episodes"], r["threshold"]))
-    return float(chosen["threshold"]), dict(rule="max_30min_event_recall_under_isolated_alarm_limit",
+    feasible = [r for r in rows if r["isolated_false_alarm_episodes"] <= max_isolated_false_alarms and
+                r["event_recall"] is not None and r["event_recall"] >= min_validation_recall]
+    if not feasible:
+        return None, dict(status="no_operating_point",
+                          rule="max_30min_event_recall_under_isolated_alarm_and_min_recall_limits",
+                          max_isolated_false_alarms=int(max_isolated_false_alarms),
+                          min_validation_recall=float(min_validation_recall), feasible=False, selected=None)
+    chosen = max(feasible, key=lambda r: (r["event_recall"],
+                                          -r["isolated_false_alarm_episodes"], r["threshold"]))
+    return float(chosen["threshold"]), dict(status="selected",
+                                              rule="max_30min_event_recall_under_isolated_alarm_and_min_recall_limits",
                                               max_isolated_false_alarms=int(max_isolated_false_alarms),
-                                              feasible=bool(feasible), selected=chosen)
+                                              min_validation_recall=float(min_validation_recall),
+                                              feasible=True, selected=chosen)
 
 
 def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), threshold=.5,
           feature_indices=None, feature_variant=None, event_balanced=False,
-          auto_threshold=False, max_isolated_false_alarms=2, min_active_bins=1):
+          auto_threshold=False, max_isolated_false_alarms=2, min_validation_recall=.4,
+          min_active_bins=1):
     if train_end >= validation_end or not 0 < threshold < 1:
         raise ValueError("划分时间或报警阈值无效")
     with np.load(dataset, allow_pickle=False) as pack:
@@ -254,7 +262,10 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
                              event_onsets[va], min_active_bins)
     threshold_selection = None
     if auto_threshold:
-        threshold, threshold_selection = select_operating_threshold(validation, max_isolated_false_alarms)
+        selected_threshold, threshold_selection = select_operating_threshold(
+            validation, max_isolated_false_alarms, min_validation_recall)
+        if selected_threshold is not None:
+            threshold = selected_threshold
     # Do not refit on validation: the final test evaluates exactly the selected fit.
     model.update(schema=1, metadata=model_metadata, threshold=float(threshold),
                  calibration="not_independently_calibrated", train_end=iso(train_end),
@@ -262,6 +273,7 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
                  feature_variant=feature_variant,
                  event_balanced=bool(event_balanced), balanced_training_events=int(balanced_events),
                  auto_threshold=bool(auto_threshold), min_active_bins=int(min_active_bins),
+                 min_validation_recall=float(min_validation_recall),
                  threshold_selection=threshold_selection,
                  parameter_count=3 + len(selected_features), experimental=True)
     output = Path(output)
