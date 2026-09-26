@@ -1,0 +1,46 @@
+{
+  "samples": 4287,
+  "skipped": {
+    "continuous_history_incomplete": 1698,
+    "rockburst_in_progress": 1,
+    "future_labels_incomplete": 60
+  },
+  "independent_events": 27,
+  "independent_groups": 25,
+  "metadata": {
+    "schema": 1,
+    "feature_names": [
+      "short_log_power_change",
+      "short_coherence",
+      "log_event_count_6h",
+      "log_event_energy_24h",
+      "log_minutes_since_event",
+      "forecast_log_power_change",
+      "recent_peak_log",
+      "recent_crest_factor",
+      "recent_stalta_log",
+      "recent_short_energy_q99_log",
+      "recent_overthreshold_count_log"
+    ],
+    "zone_id": "zone_A",
+    "preprocessing_id": "aac698d9dc9c41d3",
+    "history_minutes": 30,
+    "max_lag_seconds": 60,
+    "forecast": {
+      "backend": "sundial",
+      "samples": 20,
+      "transform": "log1p-mean-square-v1",
+      "model_sha256": "fcea0e6f41de14521a75787d77ea228bb7e66757a7c6b85278e8113913998dd4",
+      "torch_version": "2.6.0+cu118",
+      "transformers_version": "4.49.0",
+      "device": "cuda",
+      "dtype": "float32"
+    },
+    "microseismic_enabled": false,
+    "start": "2026-05-10T00:18:35.974000+00:00",
+    "end": "2026-08-13T16:37:50.888001+00:00",
+    "sample_step": "bin_file",
+    "grouping_unit": "recording_folder_component",
+    "refresh_seconds": 30.0
+  }
+}

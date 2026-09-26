@@ -1,0 +1,95 @@
+{
+  "mean": [
+    -0.3351279858135388,
+    0.24769750125448642,
+    0.0,
+    0.0,
+    7.273092595998966,
+    -0.23789303349747953
+  ],
+  "scale": [
+    1.2808270232855938,
+    0.09032850788863805,
+    1.0,
+    1.0,
+    1.0,
+    0.8359928377778135
+  ],
+  "intercepts": [
+    -2.1525337403745692,
+    -2.0781522174537486,
+    -0.5309092422445592
+  ],
+  "beta": [
+    0.06441729517240226,
+    0.010688075490297462,
+    0.0,
+    0.0,
+    -1.2054685378829065e-16,
+    0.05364464236434356
+  ],
+  "ridge": 1.0,
+  "objective": 1.1693553822590683,
+  "iterations": 15,
+  "schema": 1,
+  "metadata": {
+    "schema": 1,
+    "feature_names": [
+      "short_log_power_change",
+      "short_coherence",
+      "log_event_count_6h",
+      "log_event_energy_24h",
+      "log_minutes_since_event",
+      "forecast_log_power_change"
+    ],
+    "zone_id": "zone_A",
+    "preprocessing_id": "aac698d9dc9c41d3",
+    "history_minutes": 30,
+    "max_lag_seconds": 60,
+    "forecast": {
+      "backend": "sundial",
+      "samples": 20,
+      "transform": "log1p-mean-square-v1",
+      "model_sha256": "fcea0e6f41de14521a75787d77ea228bb7e66757a7c6b85278e8113913998dd4",
+      "torch_version": "2.6.0+cu118",
+      "transformers_version": "4.49.0",
+      "device": "cuda",
+      "dtype": "float32"
+    },
+    "microseismic_enabled": false,
+    "start": "2026-05-10T00:18:35.974000+00:00",
+    "end": "2026-08-13T16:37:50.888001+00:00",
+    "sample_step": "bin_file",
+    "grouping_unit": "recording_folder_component",
+    "refresh_seconds": 30.0
+  },
+  "threshold": 0.9,
+  "calibration": "not_independently_calibrated",
+  "train_end": "2026-07-25T05:30:44.568000+00:00",
+  "validation_end": "2026-07-29T17:06:38.837500+00:00",
+  "feature_variant": "baseline",
+  "event_balanced": true,
+  "balanced_training_events": 19,
+  "auto_threshold": true,
+  "min_active_bins": 2,
+  "threshold_selection": {
+    "rule": "max_30min_event_recall_under_isolated_alarm_limit",
+    "max_isolated_false_alarms": 2,
+    "feasible": true,
+    "selected": {
+      "threshold": 0.9,
+      "event_recall": 0.0,
+      "detected_events": 0,
+      "eligible_events": 5,
+      "alarm_episodes": 0,
+      "false_alarm_episodes": 0,
+      "boundary_near_event_episodes": 0,
+      "isolated_false_alarm_episodes": 0,
+      "post_event_carryover_episodes": 0,
+      "false_alarms_per_24h_evaluated": 0.0,
+      "alarm_time_fraction": 0.0
+    }
+  },
+  "parameter_count": 9,
+  "experimental": true
+}

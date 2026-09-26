@@ -1,0 +1,26 @@
+{
+  "status": "ok",
+  "time": "2026-08-13T16:37:50.888000+00:00",
+  "zone_id": "zone_A",
+  "p_5min": 0.10715167397251801,
+  "p_10min": 0.2091176898452205,
+  "p_30min": 0.5070319498249232,
+  "backend": {
+    "backend": "sundial",
+    "samples": 20,
+    "transform": "log1p-mean-square-v1",
+    "model_sha256": "fcea0e6f41de14521a75787d77ea228bb7e66757a7c6b85278e8113913998dd4",
+    "torch_version": "2.6.0+cu118",
+    "transformers_version": "4.49.0",
+    "device": "cuda",
+    "dtype": "float32"
+  },
+  "experimental": true,
+  "calibration": "not_independently_calibrated",
+  "quality": {
+    "continuous_cutoff": "2026-08-13T16:37:50+00:00",
+    "continuous_lag_seconds": 0.8880000114440918,
+    "continuous_blocks": 179,
+    "microseismic_count_24h": 0
+  }
+}

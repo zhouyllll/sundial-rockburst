@@ -1,0 +1,37 @@
+{
+  "output": "G:\\1A岩爆预测\\sundial-rockburst\\artifacts\\experiment_06_auto_thr",
+  "backend": "sundial",
+  "input": {
+    "mode": "simple_directory_workflow",
+    "timezone": "Asia/Shanghai",
+    "bin_format": "headerless little-endian int32, sample-major interleaved channels",
+    "availability": "file_end_time_assumed",
+    "microseismic_unit": null,
+    "microseismic_enabled": false,
+    "microseismic_archive_assumed_complete": false,
+    "disabled_microseismic_behavior": "event features omitted; zero clips represented",
+    "rockburst_labels_assumed_complete": true,
+    "continuous_files": 6232,
+    "microseismic_files": 0,
+    "labeled_rockbursts": 27
+  },
+  "samples": 4287,
+  "skipped": {
+    "continuous_history_incomplete": 1698,
+    "rockburst_in_progress": 1,
+    "future_labels_incomplete": 60
+  },
+  "split_unit": "recording_group_chronological",
+  "recording_groups": 25,
+  "train_end": "2026-07-25T05:30:44.568000+00:00",
+  "validation_end": "2026-07-29T17:06:38.837500+00:00",
+  "model": "G:\\1A岩爆预测\\sundial-rockburst\\artifacts\\experiment_06_auto_thr\\run\\model.json",
+  "metrics": "G:\\1A岩爆预测\\sundial-rockburst\\artifacts\\experiment_06_auto_thr\\run\\metrics.json",
+  "transient_ablation": "G:\\1A岩爆预测\\sundial-rockburst\\artifacts\\experiment_06_auto_thr\\ablation\\summary.json",
+  "prediction": "G:\\1A岩爆预测\\sundial-rockburst\\artifacts\\experiment_06_auto_thr\\prediction.json",
+  "split_samples": {
+    "train": 3026,
+    "validation": 589,
+    "test": 672
+  }
+}

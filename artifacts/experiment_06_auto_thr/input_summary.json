@@ -1,0 +1,14 @@
+{
+  "mode": "simple_directory_workflow",
+  "timezone": "Asia/Shanghai",
+  "bin_format": "headerless little-endian int32, sample-major interleaved channels",
+  "availability": "file_end_time_assumed",
+  "microseismic_unit": null,
+  "microseismic_enabled": false,
+  "microseismic_archive_assumed_complete": false,
+  "disabled_microseismic_behavior": "event features omitted; zero clips represented",
+  "rockburst_labels_assumed_complete": true,
+  "continuous_files": 6232,
+  "microseismic_files": 0,
+  "labeled_rockbursts": 27
+}
