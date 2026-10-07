@@ -18,7 +18,7 @@
 - 微震片段目录可选：有外部识别结果时提供；尚未整理时省略，本项目会关闭微震特征分支。本项目不重新训练识别器。
 - `run`一次执行索引、提取特征、Sundial推理、标签构建、训练、测试和最新一次预测。
 - `stream`使用训练好的模型按文件时间流式回放，一次输出一条预测，不需要岩爆标签。
-- 当前尚未用真实岩爆训练。`persistence`是无权重的流程验证基线，不是Sundial。
+- 当前项目已用真实岩爆数据完成 P0 概率校准与 P1 平替对照（见第 14 节）；`persistence` 仍是无权重的流程验证基线，不是Sundial。
 
 ## 2. 下载和安装
 
@@ -389,7 +389,42 @@ python -m rockburst predict \
 
 替换为数据中的实际时刻，保持与训练相同的backend、权重、设备、样本数和区域。预测不需要未来岩爆标签。
 
-## 13. 配置与源码
+## 13. P0 概率校准与 P1 平替对照（2026-10）
+
+真实数据小样本实验后，概率排序能力可用（均衡后验证30min AP≈0.499、测试≈0.449），但**30min 概率未独立校准、自动阈值规则失效**。以下两项实验用同一时间划分（train_end=2026-07-25T05:30:44.568+00:00、validation_end=2026-07-29T17:06:38.837500+00:00）和同一协议落地。
+
+### P0：概率标度校准（experiment_07_calibrated）
+
+问题：30min 概率全数据最大只有≈0.52、未独立校准，`no_operating_point` 时自动阈值规则回退到固定 0.5。
+
+方案（`_p0_calibration.py`，产出 `artifacts/experiment_07_calibrated/`）：
+
+- **Platt 校准**（IRLS 拟合）+ **链接函数选择**（logit / cloglog）+ **正则网格选参**（ridge × l1 × link，按验证集 NLL 选参），不触碰测试集。
+- 校准后按验证集扫描三步阈值（要求30min召回≥0.4、孤立误报≤2），选不到工作点就显式记录 `no_operating_point`，不再静默回退高阈值。
+- `_p0_selftest.py`：校准前后 NLL / 最大概率 / ECE 的数值自检。
+
+结论：校准修复了概率标度（ECE 明显下降），但**造不出排序分离**——30min 概率仍挤在 [0.5, 0.6) 顶部扁平，真正瓶颈是 30min 窗判别信息不足，由此启动 P1。
+
+### P1：Sundial 平替对照（experiment_08_p1）
+
+动机：验证瓶颈是否在 Sundial 30min 预测环节。
+
+方案：三个 Apache-2.0 开源时序模型 **chronos2 / TiRex / Lag-Llama** 替换 Sundial 的 30min 预测，复用 P0 下游校准协议（feature 取前 6 列 baseline + include_transient，ridge×l1×link 按验证 NLL 选参 + Platt 校准 + 三步阈值），跳过索引与特征提取，只做「模型推理建集 → 训练概率模型 → 保存结果」等价流程。缓存 key 与 `P1Forecaster.predict` 一致，批量预填脚本（`_p1_tirex_prefill.py` / `_p1_lagllama_prefill.py`）先行落盘全部预测。
+
+30min 指标（测试 AP / 验证 AP / 验证 recall / 验证孤立误报）：
+
+| 方案 | 验证 NLL | 测试 NLL | 验证 AP | 测试 AP | 验证 recall | 验证孤立误报 |
+|---|---|---|---|---|---|---|
+| Sundial 基线 | 0.6914 | 0.7129 | **0.4340** | 0.3746 | 0.8 | — |
+| chronos2 | 0.6924 | 0.7024 | 0.3905 | 0.4552 | 0.8 | 4 |
+| tirex | **0.6918** | 0.7069 | 0.3828 | 0.4909 | **1.0** | 4 |
+| lagllama | 0.6965 | **0.6930** | 0.3918 | **0.5562** | 0.6 | 9 |
+
+结论：三方案测试期 AP 全部显著超过 Sundial 基线（lagllama +48%），测试 NLL 也均更优——**平替成立**；但验证期基线 AP 仍最高、lagllama 验证误报偏多，且 maxp 仍压在 ≈0.53，标度问题跨模型一致，属 30min 窗信息瓶颈的系统性现象。测试集仅 3 个可检事件、多方案共享测试集，结果属**探索性**。
+
+脚本：`_p1_comparison.py`（主对照，进度写 `p1_run.log`）、`_p1_backends.py`（三后端适配）、`_p1_tirex_prefill.py` / `_p1_lagllama_prefill.py`（批量预填）、`_p1_smoke.py` / `_p1_smoke_lag.py`（冒烟）；`_p1_lagllama_src/` 是本地 Lag-Llama 官方建模（含 import 修复与自回归 future_time_feat 语义适配，`use_single_pass_sampling=True` 单趟采样提速约20倍）。
+
+## 14. 配置与源码
 
 建议8～16核CPU、32～64GB内存、单张8～16GB显存GPU，或先用CPU。工作盘1TB SSD起步，按原始数据量扩充。无需多卡，小概率模型在CPU训练。
 
