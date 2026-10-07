@@ -104,7 +104,9 @@ def main():
     print(f"[P2-extract] 划分 train_end={exp06_model['train_end']} "
           f"validation_end={exp06_model['validation_end']}", flush=True)
 
-    for tag, src in (("sundial", EXP06), ("lagllama", P1 / "lagllama")):
+    for tag, src in (("sundial", EXP06),
+                     ("lagllama", P1 / "lagllama"),
+                     ("tirex", P1 / "tirex")):
         out_dir = P2 / tag
         out_dir.mkdir(parents=True, exist_ok=True)
         ds = out_dir / "dataset.npz"

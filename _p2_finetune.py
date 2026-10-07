@@ -49,7 +49,7 @@ def main():
                    baseline_sundial="artifacts/experiment_07_calibrated/p0_summary.json",
                    baseline_lagllama="artifacts/experiment_08_p1/lagllama/model.json")
 
-    for tag in ("sundial", "lagllama"):
+    for tag in ("sundial", "lagllama", "tirex"):
         out = P2 / tag
         ds = out / "dataset.npz"
         log(f"[P2:{tag}] 训练（{N_FEAT} 维特征）...")

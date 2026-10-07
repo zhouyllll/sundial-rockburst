@@ -186,7 +186,7 @@ li{margin:5px 0}
       </table>
       <div class="verdict g">
         <span class="t">结论</span>
-        三方案<b>测试期 AP 全部显著超过基线</b>（lagllama +48%）、测试 NLL 也更优——平替成立，Sundial 环节确有改进空间；但验证期基线 AP 仍最高、lagllama 验证误报偏多，且 <b>maxp 仍压 ≈0.53</b>，标度问题是跨模型一致的系统性现象，指向 30min 窗信息瓶颈。
+        三方案<b>测试期 AP 全部显著超过基线</b>（lagllama +48%）、测试 NLL 也更优——平替成立，Sundial 环节确有改进空间；其中 <b>tirex 验证期最平衡（召回 1.0、误报 4 段最少）</b>，lagllama 测试 AP 最高；但 maxp 仍压 ≈0.53，标度问题是跨模型一致的系统性现象，指向 30min 窗信息瓶颈。
       </div>
     </div>
   </section>
@@ -209,16 +209,17 @@ li{margin:5px 0}
           <tr><td>Sundial 基线(exp07)</td><td class="num">0.6914</td><td class="num">0.544</td><td class="num">0.4340</td><td class="num">5</td><td class="num">0.7129</td><td class="num">0.557</td><td class="num">0.3746</td></tr>
           <tr><td>P2 sundial+表征</td><td class="num">0.6908</td><td class="num">0.592</td><td class="num hl">0.4693</td><td class="num">16</td><td class="num">0.6941</td><td class="num hl">0.656</td><td class="num hl">0.5098</td></tr>
           <tr><td>P2 lagllama+表征</td><td class="num">0.6958</td><td class="num hl">0.623</td><td class="num">0.4036</td><td class="num">12</td><td class="num best">0.6701</td><td class="num">0.654</td><td class="num best">0.5623</td></tr>
+          <tr><td>P2 tirex+表征</td><td class="num">0.6903</td><td class="num">0.575</td><td class="num">0.4522</td><td class="num">10</td><td class="num">0.6984</td><td class="num">0.628</td><td class="num">0.5587</td></tr>
         </tbody>
       </table>
-      <p class="notes">两方案选参均为 logit / ridge=0.3 / l1=0.0；阈值 0.5；阈值选择状态 <code>no_operating_point</code>；验证/测试召回 0.8 / 1/3。</p>
+      <p class="notes">三方案选参均为 logit / ridge=0.3 / l1=0.0；阈值 0.5；阈值选择状态 <code>no_operating_point</code>；验证/测试召回：sundial、lagllama 0.8 / 1/3，tirex 1.0 / 1/3。</p>
       <div class="verdict">
         <span class="t">结论</span>
-        <b>测试 maxp 首次突破 0.53 瓶颈</b>：0.557 → P2 sundial 0.656（+18%）、P2 lagllama 0.654；测试 AP 0.5098（较基线 +36%）、P2 lagllama 0.5623（P1 最高再 +1%）；P2 lagllama 测试 NLL 0.6701 首次系统性低于 ln2≈0.693。P0/P1 都解不开的"概率挤中间"，被无标签波形学到的时序表征拉开了。
+        <b>测试 maxp 首次突破 0.53 瓶颈</b>：0.557 → P2 sundial 0.656（+18%）、lagllama 0.654、tirex 0.628；测试 AP：sundial 0.5098（较基线 +36%）、tirex 0.5587（P1 的 0.4909 再 +14%、较基线 +49%）、lagllama 0.5623（全程最高）；P2 lagllama 测试 NLL 0.6701 首次系统性低于 ln2≈0.693。<b>表征增益跨三个预测器一致</b>，且 tirex+表征验证召回保持 1.0（5/5 全检出）。P0/P1 都解不开的"概率挤中间"，被无标签波形学到的时序表征拉开了。
       </div>
       <div class="verdict w">
         <span class="t">代价与未决</span>
-        验证集孤立误报段上升（sundial 5→16、lagllama 9→12）——概率拉开后更多窗口跨过 0.5，<b>误报管理成为新焦点</b>；测试 ECE 0.28 仍欠标定；预训练用全部无标签窗口（与报告口径一致，transductive），PCA/尺度统计只在训练集拟合。
+        验证集孤立误报段普遍上升（sundial 5→16、lagllama 9→12、tirex 4→10）——概率拉开后更多窗口跨过 0.5，<b>误报管理成为新焦点</b>；测试 ECE 0.28 仍欠标定；预训练用全部无标签窗口（与报告口径一致，transductive），PCA/尺度统计只在训练集拟合。
       </div>
     </div>
   </section>
@@ -299,11 +300,11 @@ li{margin:5px 0}
     tooltip:{trigger:'axis',triggerOn:'click',renderMode:'richText',confine:true},
     legend:{bottom:0},
     grid:{left:56,right:20,top:40,bottom:52,containLabel:true},
-    xAxis:{type:'category',data:['exp07 基线','P1 lagllama','P2 sundial','P2 lagllama'],axisLabel:{color:'#37475a'}},
+    xAxis:{type:'category',data:['exp07 基线','P1 lagllama','P2 sundial','P2 lagllama','P2 tirex'],axisLabel:{color:'#37475a'}},
     yAxis:{type:'value',min:0,max:0.7,name:'指标',nameTextStyle:{color:'#5b6b7a'},axisLabel:{color:'#5b6b7a'},splitLine:{lineStyle:{color:'#e3e7ec'}}},
     series:[
-      {name:'测试 AP',type:'bar',data:[0.3746,0.5562,0.5098,0.5623],itemStyle:{color:'#5b8ff9'},label:{show:true,position:'top',formatter:function(p){return p.value.toFixed(3)},color:'#37475a'}},
-      {name:'测试 maxp',type:'bar',data:[0.5573,0.5387,0.6562,0.6543],itemStyle:{color:'#c05326'},label:{show:true,position:'top',formatter:function(p){return p.value.toFixed(3)},color:'#37475a'}}
+      {name:'测试 AP',type:'bar',data:[0.3746,0.5562,0.5098,0.5623,0.5587],itemStyle:{color:'#5b8ff9'},label:{show:true,position:'top',formatter:function(p){return p.value.toFixed(3)},color:'#37475a'}},
+      {name:'测试 maxp',type:'bar',data:[0.5573,0.5387,0.6562,0.6543,0.6281],itemStyle:{color:'#c05326'},label:{show:true,position:'top',formatter:function(p){return p.value.toFixed(3)},color:'#37475a'}}
     ]
   });
   mk('ch2',{
@@ -311,13 +312,14 @@ li{margin:5px 0}
     tooltip:{trigger:'axis',triggerOn:'click',renderMode:'richText',confine:true},
     legend:{bottom:0},
     grid:{left:56,right:20,top:40,bottom:52,containLabel:true},
-    xAxis:{type:'category',data:['exp07 基线','P1 lagllama','P2 sundial','P2 lagllama'],axisLabel:{color:'#37475a'}},
+    xAxis:{type:'category',data:['exp07 基线','P1 lagllama','P2 sundial','P2 lagllama','P2 tirex'],axisLabel:{color:'#37475a'}},
     yAxis:{type:'value',min:0.66,max:0.72,name:'NLL',nameTextStyle:{color:'#5b6b7a'},axisLabel:{color:'#5b6b7a'},splitLine:{lineStyle:{color:'#e3e7ec'}}},
     series:[
-      {name:'验证 NLL',type:'bar',data:[0.6914,0.6965,0.6908,0.6958],itemStyle:{color:'#8fa9c4'}},
-      {name:'测试 NLL',type:'bar',data:[0.7129,0.6930,0.6941,0.6701],itemStyle:{color:'#1b7f8e'}}
-    ],
-    markLine:{silent:true,data:[{yAxis:0.693,lineStyle:{type:'dashed',color:'#b08a2e'}}]}
+      {name:'验证 NLL',type:'bar',data:[0.6914,0.6965,0.6908,0.6958,0.6903],itemStyle:{color:'#8fa9c4'}},
+      {name:'测试 NLL',type:'bar',data:[0.7129,0.6930,0.6941,0.6701,0.6984],itemStyle:{color:'#1b7f8e'},
+        markLine:{silent:true,symbol:'none',label:{show:true,formatter:'ln2',color:'#b08a2e',fontSize:11,position:'insideEndTop'},
+          lineStyle:{type:'dashed',color:'#b08a2e'},data:[{yAxis:0.693}]}}
+    ]
   });
 })();
 </script>
