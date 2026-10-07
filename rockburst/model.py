@@ -241,7 +241,7 @@ def threshold_sweep(y, scores, times, event_ids, refresh_seconds=60., thresholds
 
 
 def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60., event_onsets=None,
-             min_active_bins=1):
+             min_active_bins=1, thresholds=None):
     p = probabilities(x, model)
     truth = np.cumsum(y, axis=1) > 0
     results = {}
@@ -290,37 +290,75 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
             negative_max_probability=float(np.max(scores[~target])) if np.any(~target) else None,
                 threshold_sweep=threshold_sweep(target, scores, times, event_ids, refresh_seconds,
                                                 horizon_seconds=HORIZONS[j], event_onsets=event_onsets,
-                                                min_active_bins=min_active_bins),
+                                                min_active_bins=min_active_bins, thresholds=thresholds),
         )
     return dict(samples=len(x), evaluated_hours=len(x) * refresh_seconds / 3600,
                 nominal_step_seconds=refresh_seconds,
                 threshold=threshold, horizons=results), p
 
 
-def select_operating_threshold(validation, max_isolated_false_alarms=2, min_validation_recall=.4):
-    """Select a threshold using validation only; report no operating point honestly."""
+def select_operating_threshold(validation, max_isolated_false_alarms=2, min_validation_recall=.4,
+                               criterion="legacy", miss_penalty=5., max_alarm_time_fraction=None,
+                               thresholds=None):
+    """Select a threshold using validation only; report no operating point honestly.
+
+    criterion:
+      legacy  原规则：isolated_fa<=max 且 recall>=min 中选 (recall 最高, fa 最少, 阈值最高)。
+      cost    最小化 miss_penalty*漏检事件 + 误报段数；可选 alarm_time_fraction<=max 约束。
+      f1      验证集事件级 F1 最大（precision=检出事件/报警段）。
+    任何准则都可叠加 max_alarm_time_fraction 约束（None 表示不约束）。
+    """
+    if thresholds is None:
+        thresholds = np.arange(.02, .98, .01)
     rows = validation["horizons"]["30min"]["threshold_sweep"]
-    feasible = [r for r in rows if r["isolated_false_alarm_episodes"] <= max_isolated_false_alarms and
-                r["event_recall"] is not None and r["event_recall"] >= min_validation_recall]
-    if not feasible:
-        return None, dict(status="no_operating_point",
-                          rule="max_30min_event_recall_under_isolated_alarm_and_min_recall_limits",
+    feasible = [r for r in rows if r["event_recall"] is not None]
+    if max_alarm_time_fraction is not None:
+        feasible = [r for r in feasible if r["alarm_time_fraction"] <= max_alarm_time_fraction]
+    feasible_legacy = [r for r in feasible if
+                       r["isolated_false_alarm_episodes"] <= max_isolated_false_alarms and
+                       r["event_recall"] >= min_validation_recall]
+    if criterion == "legacy":
+        chosen = max(feasible_legacy, key=lambda r: (r["event_recall"],
+                     -r["isolated_false_alarm_episodes"], r["threshold"])) if feasible_legacy else None
+    elif criterion == "cost":
+        def cost(r):
+            miss = r["eligible_events"] - r["detected_events"] if r["eligible_events"] else 0
+            return miss_penalty * miss + r["false_alarm_episodes"]
+        chosen = min(feasible, key=cost) if feasible else None
+    elif criterion == "f1":
+        def f1(r):
+            alm = r["alarm_episodes"]
+            elig = r["eligible_events"]
+            if not alm or not elig:
+                return -1.0
+            prec = r["detected_events"] / alm
+            rec = r["event_recall"]
+            return 2.0 * prec * rec / (prec + rec) if (prec + rec) > 0 else -1.0
+        chosen = max(feasible, key=f1) if feasible else None
+    else:
+        raise ValueError("criterion 必须是 legacy/cost/f1")
+    rule = f"30min_{criterion}_threshold"
+    if chosen is None:
+        return None, dict(status="no_operating_point", rule=rule,
+                          criterion=criterion, miss_penalty=float(miss_penalty),
+                          max_alarm_time_fraction=max_alarm_time_fraction,
                           max_isolated_false_alarms=int(max_isolated_false_alarms),
-                          min_validation_recall=float(min_validation_recall), feasible=False, selected=None)
-    chosen = max(feasible, key=lambda r: (r["event_recall"],
-                                          -r["isolated_false_alarm_episodes"], r["threshold"]))
-    return float(chosen["threshold"]), dict(status="selected",
-                                              rule="max_30min_event_recall_under_isolated_alarm_and_min_recall_limits",
-                                              max_isolated_false_alarms=int(max_isolated_false_alarms),
-                                              min_validation_recall=float(min_validation_recall),
-                                              feasible=True, selected=chosen)
+                          min_validation_recall=float(min_validation_recall),
+                          grid_candidates=len(rows), feasible=False, selected=None)
+    return float(chosen["threshold"]), dict(status="selected", rule=rule,
+                                            criterion=criterion, miss_penalty=float(miss_penalty),
+                                            max_alarm_time_fraction=max_alarm_time_fraction,
+                                            max_isolated_false_alarms=int(max_isolated_false_alarms),
+                                            min_validation_recall=float(min_validation_recall),
+                                            grid_candidates=len(rows), feasible=True, selected=chosen)
 
 
 def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), threshold=.5,
           feature_indices=None, feature_variant=None, event_balanced=False,
           auto_threshold=False, max_isolated_false_alarms=2, min_validation_recall=.4,
           min_active_bins=1, links=("logit",), l1_ratios=(0.,), selection="nll",
-          calibrate=True):
+          calibrate=True, threshold_criterion="legacy", miss_penalty=5.,
+          max_alarm_time_fraction=None, threshold_grid=None):
     if train_end >= validation_end or not 0 < threshold < 1:
         raise ValueError("划分时间或报警阈值无效")
     if selection not in ("nll", "brier"):
@@ -395,12 +433,17 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
     else:
         model["calibration"] = "not_independently_calibrated"
     # 校准后（冻结校准器）重新评估验证集，用于阈值选择与报告。
+    # 仅当显式传入 threshold_grid 时用细网格重扫（避免 12 点粗网格把 0.51/0.46
+    # 这类工作点排除在外）；不传时保持 evaluate 默认 12 点，legacy 行为与历史一致。
+    eval_thresholds = threshold_grid if auto_threshold else None
     validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model, threshold, refresh,
-                             event_onsets[va], min_active_bins)
+                             event_onsets[va], min_active_bins, thresholds=eval_thresholds)
     threshold_selection = None
     if auto_threshold:
         selected_threshold, threshold_selection = select_operating_threshold(
-            validation, max_isolated_false_alarms, min_validation_recall)
+            validation, max_isolated_false_alarms, min_validation_recall,
+            criterion=threshold_criterion, miss_penalty=miss_penalty,
+            max_alarm_time_fraction=max_alarm_time_fraction, thresholds=threshold_grid)
         if selected_threshold is not None:
             threshold = selected_threshold
     # Do not refit on validation: the final test evaluates exactly the selected fit + frozen calibration.
@@ -423,6 +466,8 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
                   event_balanced=bool(event_balanced), balanced_training_events=int(balanced_events),
                   auto_threshold=bool(auto_threshold), min_active_bins=int(min_active_bins),
                   threshold_selection=threshold_selection,
+                  threshold_criterion=threshold_criterion, miss_penalty=float(miss_penalty),
+                  max_alarm_time_fraction=max_alarm_time_fraction,
                   selection=selection,
                   selected_ridge=model["ridge"], selected_link=best["link"],
                   selected_l1_ratio=best["l1_ratio"],

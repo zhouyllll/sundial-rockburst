@@ -458,6 +458,36 @@ python -m rockburst predict \
 
 结论：① 0.5 是 `no_operating_point` 的回退值而非设计值，但它并非离谱——三源可工作区全部落在 0.46–0.51；② 0.5 恰在"敏感度悬崖"上：sundial 阈值 0.49→0.50 时孤立误报段 9→16，概率在 0.48–0.53 顶部扁平堆积，误报段数随阈值**非单调**；③ trade-off 根因是验证窗口过短（10.25h 内 5 个事件，正常背景时段被压缩，报警时间占比 0.46–0.80），"孤立误报≤2 段"约束在该窗口下结构性不可满足；④ 测试集三源 recall 均 0.33，测试 3 个事件中 2 个的概率无法被任何合理阈值捕获——这是信息瓶颈，不是阈值问题。**落地建议**：把固定 0.5 换成验证集细网格 + 目标准则选点（预警场景推荐 cost5 或 tirex R80 点 t≈0.51），并在 `select_operating_threshold` 中把判据改为业务代价 / 报警时间占比约束（如 `alarm_time_fraction≤0.3`）；更长期的修复是加长验证窗口或按记录组评估。
 
+#### P2.5 阈值协议固化（model.py）
+
+上述准则已固化进 `rockburst/model.py` 的三步阈值协议，全部向后兼容：
+
+- `select_operating_threshold(..., criterion="legacy"|"cost"|"f1", miss_penalty=5., max_alarm_time_fraction=None, thresholds=None)`：
+  - `legacy`：原规则（isolated_fa≤max 且 recall≥min 中选 recall 最高 / fa 最少 / 阈值最高）；
+  - `cost`：最小化 `miss_penalty×漏检事件 + 误报段数`（预警语义，默认漏检 1 次 ≈ 5 个误报段）；
+  - `f1`：验证集事件级 F1 最大；
+  - 任一准则可叠加 `max_alarm_time_fraction`（报警时间占比上限）约束。
+- `train(..., threshold_criterion=..., miss_penalty=..., max_alarm_time_fraction=..., threshold_grid=...)`：**仅当显式传入 `threshold_grid` 时用细网格（默认 0.02–0.98 步进 0.01）重扫验证集**；不传时保持 12 点默认网格，legacy 行为与历史完全一致（三源仍 `no_operating_point` + 0.5 回退）。
+
+三源四准则验证（`_p25_threshold_protocol.py` → `artifacts/experiment_10_p25/p25_summary.json`；模型/校准与 P2 完全相同，只改阈值选择准则）：
+
+| 源 | 准则 | 阈值 | 验证 recall / 孤立误报段 / 报警时间占比 | 测试 recall / 孤立误报段 / 报警时间占比 |
+|---|---|---|---|---|
+| sundial | legacy（对照） | 0.50 | 0.80 / 16 / 0.664 | 0.33 / 6 / 0.701 |
+| sundial | cost（5×漏检+误报段） | 0.51 | **1.00** / 11 / 0.489 | 0.33 / 6 / 0.661 |
+| sundial | cost + 时间占比≤0.3 | 0.54 | 0.40 / 3 / 0.180 | 0.33 / 6 / 0.576 |
+| sundial | F1 | 0.48 | 0.60 / 6 / 0.767 | 0.33 / 9 / 0.789 |
+| lagllama | legacy（对照） | 0.50 | 0.80 / 12 / 0.559 | 0.33 / 7 / 0.638 |
+| lagllama | cost | 0.46 | 0.60 / 6 / 0.798 | 0.33 / 8 / 0.753 |
+| lagllama | cost + 时间占比≤0.3 | 0.57 | 0.40 / 2 / 0.041 | **1.00** / 5 / 0.451 |
+| lagllama | F1 | 0.46 | 0.60 / 6 / 0.798 | 0.33 / 8 / 0.753 |
+| tirex | legacy（对照） | 0.50 | 1.00 / 10 / 0.645 | 0.33 / 6 / 0.729 |
+| tirex | cost | 0.50 | **1.00** / 10 / 0.645 | 0.33 / 6 / 0.729 |
+| tirex | cost + 时间占比≤0.3 | 0.53 | 0.40 / 3 / 0.265 | 0.67 / 5 / 0.609 |
+| tirex | F1 | 0.50 | **1.00** / 10 / 0.645 | 0.33 / 6 / 0.729 |
+
+结论：① 向后兼容已验证——legacy 对照行与 P2 的 0.5 回退逐项一致；② cost / F1 选点与阈值扫描（`p2_threshold_scan.json`）完全吻合，细网格正确生效；③ `cost+时间占比≤0.3` 把阈值推到 0.53–0.57：验证 recall 降至 0.40（验证 5 事件仅 2 个峰值够高，验证 maxp 仅 0.592），但测试 recall 意外提升（lagllama 1.00、tirex 0.67）——测试事件峰值全部 ≥0.606；④ 该结果暴露评估协议一个真实特性：**段起点匹配下 recall 非单调**（sundial 测试在 t=0.54 时 1/3、t=0.60 时 3/3）——阈值越低报警段起点越早、可能落在 30min 窗口外造成漏检，"低阈值必不劣于高阈值"不成立，判定工作点须在目标网格上逐点核对。**生产配置建议**：`threshold_criterion="cost"` + 显式 `threshold_grid=np.arange(.02,.98,.01)`（预警语义），并按业务代价调 `miss_penalty`；`alarm_time_fraction` 约束在当前验证窗口下不可满足（≤0.3 需阈值≥0.53），只应在加长验证窗口后使用。
+
 脚本：`_p2_pretrain.py`（掩码重建预训练）、`_p2_extract.py`（表征提取 + PCA + 数据集装配）、`_p2_finetune.py`（P0 协议微调，汇总 `p2_summary.json`）。
 
 ## 14. 配置与源码

@@ -225,6 +225,14 @@ li{margin:5px 0}
         <span class="t">阈值工作点扫描（重审 0.5）</span>
         细网格（0.02–0.98 步进 0.01）在验证集重扫三源 30min 决策阈值（min_active_bins=2），结论：0.5 是 no_operating_point 回退值而非设计值，但三源可工作区全部落在 0.46–0.51，它并非离谱；<b>0.5 恰在"敏感度悬崖"上</b>（sundial 阈值 0.49→0.50 孤立误报段 9→16，概率在 0.48–0.53 顶部扁平堆积，误报段数随阈值非单调）；trade-off 根因是验证窗口过短（10.25h 内 5 事件，报警时间占比 0.46–0.80），"孤立误报≤2 段"结构性不可满足；测试集三源 recall 均 0.33——测试 3 事件中 2 个概率无法被任何合理阈值捕获，属信息瓶颈。落地建议：固定 0.5 → 细网格 + 目标准则选点（预警推荐 cost5，或 tirex R80 点 t≈0.51：验证 4/5 召回、孤立误报 7 段、报警时间占比 0.460），并把判据改为业务代价 / 报警时间占比约束。
       </div>
+      <div class="verdict w">
+        <span class="t">P2.5 阈值协议固化（model.py）</span>
+        <code>select_operating_threshold</code> 支持 legacy / cost / f1 准则 + miss_penalty + max_alarm_time_fraction，细网格仅显式传入 threshold_grid 时生效——向后兼容已验证：legacy 对照三源均复现 no_operating_point → 0.5 回退（与 P2 逐项一致）。三源四准则重训（experiment_10_p25，模型/校准与 P2 相同，只改阈值选择）：
+        cost（5×漏检+误报段）选点与阈值扫描完全一致——sundial t=0.51（验证 5/5、isolFA 11、time 0.489）、lagllama t=0.46、tirex t=0.50（验证 5/5）；
+        cost + 时间占比≤0.3 把阈值推到 0.53–0.57，验证 recall 降至 0.40（验证 maxp 仅 0.592，5 事件中仅 2 个峰值够高），但测试 recall 意外提升（lagllama 1.00、tirex 0.67）——测试事件峰值全部 ≥0.606；
+        重要发现：段起点匹配下 recall 非单调（sundial 测试 t=0.54 → 1/3、t=0.60 → 3/3），阈值越低报警段起点越早、可能落在 30min 窗口外造成漏检，"低阈值必不劣于高阈值"不成立，工作点须在目标网格上逐点核对。
+        <b>生产建议</b>：threshold_criterion="cost" + 显式细网格（预警语义）；时间占比约束待加长验证窗口后启用。
+      </div>
     </div>
   </section>
 
