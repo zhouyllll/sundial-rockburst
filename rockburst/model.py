@@ -11,19 +11,48 @@ from .data import FEATURE_NAMES, HORIZONS
 from .io import iso, write_csv, write_json
 
 
-def probabilities(x, model):
+def _inverse_link(logits, link="logit"):
+    if link == "logit":
+        return expit(logits)
+    if link == "cloglog":
+        return 1.0 - np.exp(-np.exp(logits))
+    raise ValueError(f"未知链接函数: {link}")
+
+
+def _raw_probabilities(x, model):
     x = np.asarray(x, dtype=np.float64)
     beta = np.asarray(model.get("beta", []), dtype=np.float64)
     if x.ndim != 3 or x.shape[1:] != (3, len(beta)) or not len(beta) or not np.isfinite(x).all():
         raise ValueError("概率模型输入必须为 [N,3,F]，且F须与模型特征数相同")
     z = (x - np.asarray(model["mean"])) / np.asarray(model["scale"])
     logits = z @ np.asarray(model["beta"]) + np.asarray(model["intercepts"])
-    return 1 - np.cumprod(1 - expit(logits), axis=1)
+    hazard = _inverse_link(logits, model.get("link", "logit"))
+    return 1 - np.cumprod(1 - hazard, axis=1)
 
 
-def fit_hazard(x, y, mask, ridge, sample_weights=None):
+def probabilities(x, model):
+    p = _raw_probabilities(x, model)
+    calibration = model.get("calibration")
+    if isinstance(calibration, dict) and calibration.get("per_horizon"):
+        clipped = np.clip(p, 1e-12, 1 - 1e-12)
+        z = np.log(clipped / (1 - clipped))
+        out = np.empty_like(p)
+        for j, c in enumerate(calibration["per_horizon"]):
+            if c is None or not np.isfinite(c.get("A", 1.0)):
+                out[:, j] = p[:, j]
+            else:
+                out[:, j] = expit(c["A"] * z[:, j] + c.get("B", 0.0))
+        return out
+    return p
+
+
+def fit_hazard(x, y, mask, ridge, sample_weights=None, link="logit", l1_ratio=0.0):
     if ridge <= 0 or not np.isfinite(ridge):
         raise ValueError("ridge 必须是有限正数")
+    if link not in ("logit", "cloglog"):
+        raise ValueError(f"未知链接函数: {link}")
+    if not 0. <= l1_ratio <= 1.:
+        raise ValueError("l1_ratio 必须在 [0,1] 内")
     for j in range(3):
         eligible = y[mask[:, j], j]
         if not len(eligible) or len(np.unique(eligible)) != 2:
@@ -35,20 +64,46 @@ def fit_hazard(x, y, mask, ridge, sample_weights=None):
     initial = np.zeros(3 + x.shape[-1])
     for j in range(3):
         rate = y[mask[:, j], j].mean()
-        initial[j] = np.log(rate / (1 - rate))
+        rate = min(max(rate, 1e-6), 1 - 1e-6)
+        if link == "logit":
+            initial[j] = np.log(rate / (1 - rate))
+        else:
+            initial[j] = np.log(-np.log1p(-rate))
     if sample_weights is None:
         sample_weights = np.ones(len(x), dtype=np.float64)
     sample_weights = np.asarray(sample_weights, dtype=np.float64)
     if sample_weights.shape != (len(x),) or not np.isfinite(sample_weights).all() or np.any(sample_weights <= 0):
         raise ValueError("sample_weights必须是长度等于样本数的有限正数")
     weight = mask.astype(float) * sample_weights[:, None] / np.sum(sample_weights)
+    l1_eps = 1e-8
 
     def objective(theta):
         intercepts, beta = theta[:3], theta[3:]
         logits = z @ beta + intercepts
-        loss = np.sum(weight * (np.logaddexp(0., logits) - y * logits)) + .5 * ridge * np.sum(beta ** 2)
-        residual = weight * (expit(logits) - y)
-        grad = np.r_[residual.sum(axis=0), np.einsum("nj,njk->k", residual, z) + ridge * beta]
+        if link == "logit":
+            hazard = expit(logits)
+            loss_data = np.sum(weight * (np.logaddexp(0., logits) - y * logits))
+            residual = weight * (hazard - y)
+            grad = np.r_[residual.sum(axis=0), np.einsum("nj,njk->k", residual, z)]
+        else:
+            u = np.exp(logits)
+            hazard = 1. - np.exp(-u)
+            hazard_c = np.clip(hazard, 1e-12, 1 - 1e-12)
+            loss_data = np.sum(weight * (-(y * np.log(hazard_c) + (1 - y) * np.log1p(-hazard_c))))
+            # dL/dl = dλ/dl · ((1-y)/(1-λ) − y/λ)
+            dlam = u * np.exp(-u)
+            residual = weight * dlam * ((1. - y) / np.maximum(1. - hazard, 1e-12)
+                                        - y / np.maximum(hazard, 1e-12))
+            grad = np.r_[residual.sum(axis=0), np.einsum("nj,njk->k", residual, z)]
+        if l1_ratio > 0.:
+            smoothed = np.sqrt(beta ** 2 + l1_eps)
+            loss = loss_data + .5 * ridge * (1. - l1_ratio) * np.sum(beta ** 2) \
+                + ridge * l1_ratio * np.sum(smoothed)
+            grad = np.r_[grad[:3], grad[3:] + ridge * ((1. - l1_ratio) * beta
+                                                       + l1_ratio * beta / smoothed)]
+        else:
+            loss = loss_data + .5 * ridge * np.sum(beta ** 2)
+            grad = np.r_[grad[:3], grad[3:] + ridge * beta]
         return float(loss), grad
 
     result = minimize(objective, initial, method="L-BFGS-B", jac=True,
@@ -56,8 +111,61 @@ def fit_hazard(x, y, mask, ridge, sample_weights=None):
     if not result.success or not np.isfinite(result.x).all():
         raise ValueError(f"优化未收敛: {result.message}")
     return dict(mean=mean.tolist(), scale=scale.tolist(), intercepts=result.x[:3].tolist(),
-                beta=result.x[3:].tolist(), ridge=float(ridge), objective=float(result.fun),
+                beta=result.x[3:].tolist(), ridge=float(ridge), link=link,
+                l1_ratio=float(l1_ratio), objective=float(result.fun),
                 iterations=int(result.nit))
+
+
+def fit_platt_calibration(y, p, sample_weights=None, a_bounds=(0.2, 5.0)):
+    """Fit per-horizon Platt (A, B): p* = σ(A·logit(p) + B), minimizing weighted binary log loss.
+
+    Weighted fitting keeps the rare positives from being drowned by the negative majority
+    (mirrors the training-side event-balanced weighting); A is bounded to avoid pathological
+    stretching on very sparse validation positives.
+    """
+    y = np.asarray(y, dtype=float)
+    p = np.asarray(p, dtype=float)
+    n = int(len(y))
+    if not np.any(y) or np.all(y):
+        return dict(A=1.0, B=0.0, n=n, note="no_positive_variation")
+    if sample_weights is None:
+        sample_weights = np.ones(len(y), dtype=np.float64)
+    sample_weights = np.asarray(sample_weights, dtype=np.float64)
+    w = sample_weights / np.sum(sample_weights) * len(y)
+    clipped = np.clip(p, 1e-12, 1 - 1e-12)
+    z = np.log(clipped / (1 - clipped))
+    lo, hi = a_bounds
+
+    def objective(theta):
+        A, B = theta
+        pc = np.clip(expit(A * z + B), 1e-12, 1 - 1e-12)
+        loss = -np.mean(w * (y * np.log(pc) + (1 - y) * np.log1p(-pc)))
+        residual = w * (pc - y)
+        return float(loss), np.array([np.mean(residual * z), np.mean(residual)])
+
+    result = minimize(objective, [1.0, 0.0], method="L-BFGS-B", jac=True,
+                      bounds=[(lo, hi), (None, None)],
+                      options={"maxiter": 500, "ftol": 1e-12})
+    A, B = result.x if result.success else (1.0, 0.0)
+    if not np.isfinite(A) or not np.isfinite(B):
+        A, B = 1.0, 0.0
+    return dict(A=float(A), B=float(B), n=n)
+
+
+def expected_calibration_error(y, p, bins=10):
+    y = np.asarray(y, dtype=float)
+    p = np.asarray(p, dtype=float)
+    if not len(y) or not np.any(y) or not np.any(~y.astype(bool)):
+        return None
+    edges = np.linspace(0., 1., bins + 1)
+    total = 0.
+    for k in range(bins):
+        lo, hi = edges[k], edges[k + 1]
+        sel = (p >= lo) & (p < hi) if k < bins - 1 else (p >= lo) & (p <= hi)
+        n = int(sel.sum())
+        if n:
+            total += abs(float(p[sel].mean()) - float(y[sel].mean())) * n / len(y)
+    return float(total)
 
 
 def event_balanced_weights(y, event_ids):
@@ -165,6 +273,7 @@ def evaluate(x, y, mask, times, event_ids, model, threshold, refresh_seconds=60.
             brier=float(np.mean((scores - target) ** 2)),
             log_loss=float(-np.mean(target * np.log(clipped) + (1 - target) * np.log1p(-clipped))),
             average_precision=average_precision(target, scores),
+            ece=expected_calibration_error(target, scores),
             positive_samples=int(target.sum()), mean_probability=float(scores.mean()),
             alarm_time_fraction=float(active.mean()), alarm_episodes=len(starts),
             false_alarm_episodes=int(false_alarms),
@@ -210,9 +319,16 @@ def select_operating_threshold(validation, max_isolated_false_alarms=2, min_vali
 def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), threshold=.5,
           feature_indices=None, feature_variant=None, event_balanced=False,
           auto_threshold=False, max_isolated_false_alarms=2, min_validation_recall=.4,
-          min_active_bins=1):
+          min_active_bins=1, links=("logit",), l1_ratios=(0.,), selection="nll",
+          calibrate=True):
     if train_end >= validation_end or not 0 < threshold < 1:
         raise ValueError("划分时间或报警阈值无效")
+    if selection not in ("nll", "brier"):
+        raise ValueError("selection 必须是 nll 或 brier")
+    if not links or any(link not in ("logit", "cloglog") for link in links):
+        raise ValueError("links 必须是 logit/cloglog 的非空组合")
+    if not l1_ratios or any(not 0. <= v <= 1. for v in l1_ratios):
+        raise ValueError("l1_ratios 必须在 [0,1] 内")
     with np.load(dataset, allow_pickle=False) as pack:
         x, y, mask, times = (pack[k] for k in ["x", "y", "mask", "times"])
         event_ids, groups = pack["event_ids"], pack["groups"]
@@ -251,13 +367,34 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
     sample_weights, balanced_events = event_balanced_weights(y[tr], event_ids[tr]) if event_balanced else (
         np.ones(np.sum(tr), dtype=np.float64), 0)
     candidates = []
-    for ridge in ridges:
-        model = fit_hazard(x[tr], y[tr], mask[tr], float(ridge), sample_weights)
-        validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model, threshold, refresh,
-                                 event_onsets[va], min_active_bins)
-        score = np.mean([v["brier"] for v in validation["horizons"].values()])
-        candidates.append((float(score), model))
-    _, model = min(candidates, key=lambda item: item[0])
+    for link in links:
+        for l1_ratio in l1_ratios:
+            for ridge in ridges:
+                model = fit_hazard(x[tr], y[tr], mask[tr], float(ridge), sample_weights,
+                                   link=link, l1_ratio=float(l1_ratio))
+                validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model,
+                                         threshold, refresh, event_onsets[va], min_active_bins)
+                if selection == "nll":
+                    score = np.mean([v["log_loss"] for v in validation["horizons"].values()])
+                else:
+                    score = np.mean([v["brier"] for v in validation["horizons"].values()])
+                candidates.append((float(score), dict(model=model, link=link,
+                                                      l1_ratio=float(l1_ratio), ridge=float(ridge))))
+    _, best = min(candidates, key=lambda item: item[0])
+    model = best["model"]
+    if calibrate:
+        y_truth = np.cumsum(y[va], axis=1) > 0
+        p_raw = _raw_probabilities(x[va], model)
+        # 校准器拟合采用与训练一致的 event-balanced 权重，避免极稀疏正例被负例淹没。
+        cal_weights, _ = event_balanced_weights(y_truth, event_ids[va]) if event_balanced else (
+            np.ones(np.sum(va), dtype=np.float64), 0)
+        per_horizon = [fit_platt_calibration(y_truth[:, j], p_raw[:, j], cal_weights)
+                       for j in range(3)]
+        model["calibration"] = dict(method="platt", fit_on="validation",
+                                    weighted=bool(event_balanced), per_horizon=per_horizon)
+    else:
+        model["calibration"] = "not_independently_calibrated"
+    # 校准后（冻结校准器）重新评估验证集，用于阈值选择与报告。
     validation, _ = evaluate(x[va], y[va], mask[va], times[va], event_ids[va], model, threshold, refresh,
                              event_onsets[va], min_active_bins)
     threshold_selection = None
@@ -266,16 +403,18 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
             validation, max_isolated_false_alarms, min_validation_recall)
         if selected_threshold is not None:
             threshold = selected_threshold
-    # Do not refit on validation: the final test evaluates exactly the selected fit.
-    model.update(schema=1, metadata=model_metadata, threshold=float(threshold),
-                 calibration="not_independently_calibrated", train_end=iso(train_end),
+    # Do not refit on validation: the final test evaluates exactly the selected fit + frozen calibration.
+    model.update(schema=2, metadata=model_metadata, threshold=float(threshold),
+                 calibration=model["calibration"], train_end=iso(train_end),
                  validation_end=iso(validation_end),
                  feature_variant=feature_variant,
                  event_balanced=bool(event_balanced), balanced_training_events=int(balanced_events),
                  auto_threshold=bool(auto_threshold), min_active_bins=int(min_active_bins),
                  min_validation_recall=float(min_validation_recall),
                  threshold_selection=threshold_selection,
-                 parameter_count=3 + len(selected_features), experimental=True)
+                 parameter_count=3 + len(selected_features), experimental=True,
+                 link=best["link"], l1_ratio=best["l1_ratio"], ridge=best["ridge"],
+                 selection=selection, calibration_fit_on="validation")
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     write_json(output / "model.json", model)
@@ -284,11 +423,14 @@ def train(dataset, output, train_end, validation_end, ridges=(.1, 1., 10.), thre
                   event_balanced=bool(event_balanced), balanced_training_events=int(balanced_events),
                   auto_threshold=bool(auto_threshold), min_active_bins=int(min_active_bins),
                   threshold_selection=threshold_selection,
-                  selected_ridge=model["ridge"], candidates=[dict(ridge=m["ridge"], validation_brier=s)
-                                                            for s, m in candidates],
+                  selection=selection,
+                  selected_ridge=model["ridge"], selected_link=best["link"],
+                  selected_l1_ratio=best["l1_ratio"],
+                  candidates=[dict(ridge=m["ridge"], link=m["link"], l1_ratio=m["l1_ratio"],
+                                   validation_score=s) for s, m in candidates],
                   purged_samples=int(np.sum(~(tr | va | te))), splits={},
                   alarm_definition="threshold crossing; consecutive active samples merge; a new alarm must precede the next event within its horizon",
-                  limitation="实验性结果；相邻样本相关。未进行独立概率校准或置信区间估计。测试只评估有完整输入的时刻；时长按名义步长估算。")
+                  limitation="实验性结果；相邻样本相关。校准器仅在验证集拟合并冻结（Platt，每时窗2参数），测试评估使用冻结校准；未进行置信区间估计。测试只评估有完整输入的时刻；时长按名义步长估算。")
     for name, selected in splits.items():
         metrics, p = evaluate(x[selected], y[selected], mask[selected], times[selected],
                               event_ids[selected], model, threshold, refresh, event_onsets[selected],

@@ -97,6 +97,18 @@ def parser():
     p.add_argument("--ridge", type=float, nargs="+", default=[.1, 1., 10.])
     p.add_argument("--threshold", type=float, default=.5, help="预先固定的实验报警阈值")
     p.add_argument("--output", required=True)
+    p.add_argument("--link", choices=["logit", "cloglog"], default=None,
+                   help="默认同时尝试 logit 与 cloglog，按验证集 NLL 选")
+    p.add_argument("--l1-ratio", type=float, default=0., help="弹性网 l1 比例，默认 0（纯 ridge）")
+    p.add_argument("--selection", choices=["nll", "brier"], default="nll",
+                   help="ridge/链接选参目标，默认 NLL/log loss（P0）")
+    p.add_argument("--no-calibrate", action="store_true", help="关闭验证集 Platt 校准（默认开启）")
+    p.add_argument("--event-balanced", action="store_true", help="按岩爆事件均衡训练样本权重")
+    p.add_argument("--auto-threshold", action="store_true",
+                   help="校准后在验证集按孤立误报/召回约束选阈值")
+    p.add_argument("--max-isolated-false-alarms", type=int, default=2)
+    p.add_argument("--min-validation-recall", type=float, default=.4)
+    p.add_argument("--min-active-bins", type=int, choices=[1, 2, 3], default=1)
     p = commands.add_parser("predict", help="在指定时刻输出三个累计概率")
     add_inputs(p)
     add_forecaster(p)
@@ -144,9 +156,17 @@ def main(argv=None):
             from .demo import demo
             result = demo(args.output)
         elif args.command == "train":
+            links = (args.link,) if args.link else ("logit", "cloglog")
             report = train(args.dataset, args.output, timestamp(args.train_end),
-                           timestamp(args.validation_end), args.ridge, args.threshold)
+                           timestamp(args.validation_end), args.ridge, args.threshold,
+                           links=links, l1_ratios=(args.l1_ratio,), selection=args.selection,
+                           calibrate=not args.no_calibrate, event_balanced=args.event_balanced,
+                           auto_threshold=args.auto_threshold,
+                           max_isolated_false_alarms=args.max_isolated_false_alarms,
+                           min_validation_recall=args.min_validation_recall,
+                           min_active_bins=args.min_active_bins)
             result = {"output": args.output, "selected_ridge": report["selected_ridge"],
+                      "selected_link": report["selected_link"], "selection": report["selection"],
                       "test": report["splits"]["test"], "calibration": report["calibration"]}
         elif args.command == "build":
             data = Inputs(args.continuous, args.events, args.coverage, args.zone, args.rockbursts)
