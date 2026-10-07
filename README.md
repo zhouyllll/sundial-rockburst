@@ -512,3 +512,31 @@ python -m rockburst run --help
 git pull --ff-only
 git submodule update --init --recursive
 ```
+
+## 14. P3 微震分支验证脚本（评审意见 3.3 / 3.4）
+
+针对微震分支候选指标的外部评审缺口（大小分布与统计效力），新增验证脚本
+`_p3_validation_bvalue_cluster.py`：
+
+- **3.3 大小分布（b 值）**：按距岩爆窗口（默认 0/3/6/24h）计算 b 值
+  （Aki 1965 MLE，n<50 自动 Utsu (N-1)/N 修正 + Shi&Bolt 标准差）、窗口最大能量、
+  P99/P50 能量比。能量-震级换算采用 Gutenberg-Richter `log10 E = 1.5M + 4.8`（E 单位 J）；
+  估计时只计入 ≥ 完整性下限 E_min 的事件（防止小事件拉低 mean(M) 抬高 b）。
+- **3.4 簇级统计效力**：事件按 `cluster_gap_h` 时间间隔聚类（默认 24h），
+  命中率以簇为单位重采样（默认 5000 次 bootstrap）给出 95% 置信区间；
+  簇数 ≤ 4 时提示按「无法估计」处理。多重比较内置 Bonferroni 校正说明
+  （示例：p=0.003 × 30 次比较 → 阈值 0.0017 → 不显著）。
+
+用法：
+```bash
+python _p3_validation_bvalue_cluster.py --demo              # 内置模拟自检（27 条真实岩爆时间 + 幂律能量）
+python _p3_validation_bvalue_cluster.py --catalog events.csv     --rb_times rockbursts_full.csv --out out.json           # 真实事件目录（time,energy[,group]）
+```
+
+Demo 自检结果（artifacts/experiment_11_p3_validation/demo_out.json）：
+模拟幂律 b_true=1.05 的 1047 事件目录 → Aki 估计 b=1.040 ± 0.030（正确回收）；
+9 个微震簇（gap=24h）bootstrap 区间与 Bonferroni 示例均正常输出。
+
+> 输入缺口：当前 G 盘无现成「逐事件时间+能量」微震目录（仅 27 条岩爆标签时间、
+> 7.2-7.3 时段 7 条检测事件无能量字段、eDAS bin 原始波形需解码标定）。
+> 事件目录（CSV：time,energy[,group]）到位后直接 `--catalog` 重跑即可产出真实结论。
