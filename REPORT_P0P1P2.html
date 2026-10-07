@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN" style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sundial 岩爆预测 — P0/P1/P2 落地汇报</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f4c81'/%3E%3Cpath d='M6 22 Q10 8 16 14 T26 20' stroke='%23f6c445' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='22' cy='10' r='2.6' fill='%23c05326'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=Noto+Serif+SC:wght@600;800&display=swap">
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --ink:#1c2733; --sub:#5b6b7a; --line:#e3e7ec;
+  --blue:#0f4c81; --cyan:#1b7f8e; --orange:#c05326; --gold:#b08a2e;
+  --p0:#0f4c81; --p1:#1b7f8e; --p2:#c05326;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;line-height:1.75;font-size:15px}
+.wrap{max-width:960px;margin:0 auto;padding:0 24px}
+section{padding:44px 0 8px}
+h1{font-family:"Noto Serif SC","Noto Sans SC",serif;font-size:34px;font-weight:800;letter-spacing:.5px;line-height:1.3}
+h2{font-family:"Noto Serif SC","Noto Sans SC",serif;font-size:24px;font-weight:800;margin:0 0 6px;display:flex;align-items:baseline;gap:12px}
+h2 .tag{font-family:"Noto Sans SC",sans-serif;font-size:13px;font-weight:700;color:#fff;padding:2px 10px;border-radius:999px;letter-spacing:1px}
+.tag.t0{background:var(--p0)} .tag.t1{background:var(--p1)} .tag.t2{background:var(--p2)} .tag.tm{background:#5b6b7a}
+h3{font-size:17px;font-weight:700;margin:26px 0 8px}
+p{margin:8px 0;color:#2a3642}
+.sub{color:var(--sub);font-size:13.5px}
+.lead{font-size:16.5px;line-height:1.9}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px 22px;margin:16px 0}
+.meta{display:flex;flex-wrap:wrap;gap:8px 20px;color:var(--sub);font-size:13px;margin:10px 0 18px}
+.hero{background:linear-gradient(150deg,#0f2c4a 0%,#0f4c81 58%,#1b7f8e 100%);color:#fff;padding:64px 0 56px;border-radius:0 0 24px 24px}
+.hero .sub{color:#bcd3e8}
+.hero h1{font-size:36px}
+.hero .kbd{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+.hero .kbd div{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);border-radius:8px;padding:10px 16px;min-width:150px}
+.hero .kbd .n{font-size:24px;font-weight:900;font-variant-numeric:tabular-nums;color:#f6c445}
+.hero .kbd .l{font-size:12px;color:#cfe0f0;margin-top:2px}
+.statline{display:flex;flex-wrap:wrap;gap:0;border-top:1px solid var(--line);margin-top:22px}
+.statline>div{flex:1;min-width:170px;padding:14px 18px;border-left:1px solid var(--line)}
+.statline>div:first-child{border-left:none;padding-left:0}
+.statline .n{font-size:21px;font-weight:900;font-variant-numeric:tabular-nums;color:var(--blue)}
+.statline .n.up{color:var(--orange)}
+.statline .l{font-size:12.5px;color:var(--sub)}
+table{width:100%;border-collapse:collapse;margin:14px 0;table-layout:fixed;font-size:13.5px}
+th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:break-word}
+th{font-weight:700;color:#37475a;background:#eef1f5;border-bottom:1px solid #d6dce4}
+tr:last-child td{border-bottom:none}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+td.hl{font-weight:800}
+td.best{background:#fff6e6;font-weight:800;color:#8a5a00}
+.notes{font-size:12.5px;color:var(--sub);margin-top:6px}
+.verdict{border-left:4px solid var(--blue);background:#f2f6fa;padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0;font-size:14.5px}
+.verdict.g{background:#f2faf6;border-color:var(--cyan)}
+.verdict.w{background:#fbf5ef;border-color:var(--orange)}
+.verdict .t{font-weight:800;display:block;margin-bottom:2px}
+/* timeline: grid 3 col */
+.tl{display:grid;grid-template-columns:92px 34px 1fr;gap:0;margin:22px 0 8px}
+.tl .row{display:contents}
+.tl .t{font-size:13px;color:var(--sub);padding:6px 8px 6px 0;text-align:right;font-variant-numeric:tabular-nums}
+.tl .node{justify-self:center;position:relative;display:flex;flex-direction:column;align-items:center}
+.tl .dot{width:14px;height:14px;border-radius:50%;background:var(--blue);border:3px solid #fff;box-shadow:0 0 0 2px var(--blue);margin-top:8px}
+.tl .dot.d1{background:var(--p1);box-shadow:0 0 0 2px var(--p1)}
+.tl .dot.d2{background:var(--p2);box-shadow:0 0 0 2px var(--p2)}
+.tl .dot.d3{background:#7a8a99;box-shadow:0 0 0 2px #7a8a99}
+.tl .bar{width:2px;flex:1;background:var(--line);min-height:34px}
+.tl .c{padding:4px 0 22px 6px}
+.tl .c b{display:block;font-size:15px}
+.tl .c span{font-size:13px;color:var(--sub)}
+code{background:#eef1f5;border-radius:4px;padding:1px 6px;font-family:Consolas,"Courier New",monospace;font-size:12.5px;color:#24425e}
+.chart{width:100%;height:340px;margin:10px 0}
+ul,ol{margin:8px 0 8px 22px}
+li{margin:5px 0}
+.foot{border-top:1px solid var(--line);margin-top:48px;padding:26px 0 60px;color:var(--sub);font-size:12.5px}
+.taglist{display:flex;flex-wrap:wrap;gap:6px}
+.pill{font-size:12px;background:#eef1f5;border:1px solid #d6dce4;border-radius:999px;padding:3px 10px;color:#37475a}
+@media (max-width:640px){
+  body{font-size:14.5px}
+  .wrap{padding:0 16px}
+  h1{font-size:27px}
+  .hero h1{font-size:29px}
+  .hero{padding:44px 0 38px}
+  .hero .kbd div{min-width:130px}
+  .tl{grid-template-columns:66px 26px 1fr}
+  .statline>div{min-width:140px;padding:12px 10px}
+  .chart{height:300px}
+  th,td{padding:7px 6px;font-size:12.5px}
+}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <div class="sub" style="letter-spacing:2px;font-size:12.5px;">SUNDIAL ROCKBURST · 模型选型调研落地汇报</div>
+    <h1 style="margin-top:10px;">从校准到表征：P0 / P1 / P2 三阶段实现结果</h1>
+    <p style="color:#dce9f5;max-width:720px;margin-top:14px;font-size:16px;">按模型选型调研报告的优先级逐项落地：P0 概率校准 → P1 预测器平替对照 → P2 掩码重建自监督预训练。本报告汇总三阶段的方法、数值与结论。</p>
+    <div class="kbd">
+      <div><div class="n">0.375 → 0.510</div><div class="l">测试 30min AP（P2 sundial vs exp07 基线，+36%）</div></div>
+      <div><div class="n">0.557 → 0.656</div><div class="l">测试 30min 最大概率（首次突破 0.53 瓶颈，+18%）</div></div>
+      <div><div class="n">0.713 → 0.670</div><div class="l">测试 NLL（P2 lagllama，首次低于 ln2）</div></div>
+      <div><div class="n">0.562</div><div class="l">测试 30min AP（P2 lagllama，全程最高）</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="meta">
+    <span>项目：sundial-rockburst（github.com/zhouyllll/sundial-rockburst）</span>
+    <span>时间：2026-09-22 ~ 2026-10-07</span>
+    <span>解释器：yb（Python 3.13 / torch 2.6.0+cu118 / RTX 2080 Ti）</span>
+  </div>
+
+  <section id="summary">
+    <h2><span class="tag tm">摘要</span>三阶段主线与判断</h2>
+    <p class="lead">核心结论：<b>瓶颈不在 Sundial 预测器，而在下游概率的标度与 30min 窗的信息量</b>。P0 校准修好了概率标度但造不出排序分离；P1 三款平替在测试期 AP 全部超过基线，但 maxp 仍压 ≈0.53；P2 用全部无标签波形做掩码重建预训练，把测试 maxp 首次拉到 0.656、测试 AP 提高 36%——信息瓶颈第一次被实质性打开。</p>
+    <div class="tl">
+      <div class="row"><div class="t">2026-09-22<br>~09-26</div><div class="node"><div class="dot"></div><div class="bar"></div></div><div class="c"><b>P0 · 概率校准（exp01~07）</b><span>因果性修正、瞬态特征消融、事件均衡、Platt 校准 + NLL 选参 + 三步阈值；结论：标度修复，排序瓶颈仍在。</span></div></div>
+      <div class="row"><div class="t">2026-09-27<br>~10-05</div><div class="node"><div class="dot d1"></div><div class="bar"></div></div><div class="c"><b>P1 · 预测器平替对照（exp08）</b><span>chronos2 / TiRex / Lag-Llama 替换 Sundial 30min 预测，下游协议不变；Lag-Llama 测试 AP 0.5562 最高，maxp 仍 ≈0.54。</span></div></div>
+      <div class="row"><div class="t">2026-10-06<br>~10-07</div><div class="node"><div class="dot d2"></div><div class="bar"></div></div><div class="c"><b>P2 · 掩码重建预训练（exp09）</b><span>全部无标签波形学时序表征 → PCA 拼接 → 风险模型微调；maxp 突破 0.65，测试 AP 0.5098（+36%）。</span></div></div>
+      <div class="row"><div class="t">下一步</div><div class="node"><div class="dot d3"></div><div class="bar" style="min-height:0"></div></div><div class="c"><b>P3 · 微震分支与第二通道</b><span>需外部微震识别结果（当前无）；另建议重审误报约束与独立测试记录。</span></div></div>
+    </div>
+  </section>
+
+  <section id="method">
+    <h2><span class="tag tm">方法</span>任务设定与评估协议</h2>
+    <div class="card">
+      <h3>两级架构</h3>
+      <p>连续 DAS 波形 bin → 每 10 秒特征块 → 冻结 Sundial（30min 历史）预测未来特征走势 → 融合 6 维特征 → <b>9 参数离散时间风险模型</b>（3 时窗截距 + 共享系数）→ P5 ≤ P10 ≤ P30。</p>
+      <h3>数据</h3>
+      <ul>
+        <li>连续特征：18285 个 10s 块（约 51 小时，含全部正常时段）；下游样本 4287 个（train 2963 / validation 615 / test 644），27 条岩爆标签、25 个记录组。</li>
+        <li>时间划分（P0/P1/P2 共用）：train_end=2026-07-25T05:30:44.568+00:00，validation_end=2026-07-29T17:06:38.837500+00:00；按记录组时间顺序 70/15/15，边界剔除跨界标签。</li>
+        <li>测试集仅 <b>3 个可检事件</b>，多方案共享测试集——所有结论属<b>探索性</b>。</li>
+      </ul>
+      <h3>P0 协议（P1/P2 共用）</h3>
+      <p>ridge × l1_ratio × link（logit/cloglog）网格，按<b>验证集 NLL</b> 选参；选参后 Platt 校准（验证集拟合、冻结）；阈值三步协议（校准 → 验证集按召回≥0.4、孤立误报≤2 段选阈值 → 冻结 → 测试报数），无可行工作点则记录 <code>no_operating_point</code> 而非静默回退。</p>
+    </div>
+  </section>
+
+<!-- p0 -->
+  <section id="p0">
+    <h2><span class="tag t0">P0</span>概率校准：修好标度，但造不出排序分离</h2>
+    <div class="card">
+      <h3>做了什么</h3>
+      <ul>
+        <li>前置：exp02 因果性修正（10s 特征块严格在预测时刻前完成）+ 记录组分组建模切分；exp03/04 瞬态特征消融（超阈值计数特征测试 AP +102%）；exp05 事件均衡训练（正负概率分离显著，验证 AP 0.314→0.499）。</li>
+        <li>exp06 自动阈值暴露问题：均衡模型 30min 概率压缩在 0.5 附近（全数据 max≈0.52），自动阈值只能选到全静默方案（<code>no_operating_point</code>）。</li>
+        <li>exp07（P0 本体）：<code>_p0_calibration.py</code>——Platt 校准（IRLS）+ cloglog/logit A/B + ridge×l1 网格，按验证 NLL 选参，三步阈值；<code>_p0_selftest.py</code> 数值自检。</li>
+      </ul>
+      <h3>结果（30min，exp07）</h3>
+      <table>
+        <colgroup><col style="width:20%"><col style="width:16%"><col style="width:16%"><col style="width:16%"><col style="width:16%"><col style="width:16%"></colgroup>
+        <thead><tr><th>切分</th><th class="num">NLL</th><th class="num">maxp</th><th class="num">ECE</th><th class="num">AP</th><th class="num">召回/误报段</th></tr></thead>
+        <tbody>
+          <tr><td>验证</td><td class="num">0.6914</td><td class="num">0.544</td><td class="num">0.168</td><td class="num">0.4340</td><td class="num">4/5 · 5</td></tr>
+          <tr><td>测试</td><td class="num">0.7129</td><td class="num">0.557</td><td class="num">0.256</td><td class="num">0.3746</td><td class="num">1/3 · 4</td></tr>
+        </tbody>
+      </table>
+      <p class="notes">选参：logit / ridge=0.3 / l1=0.0；阈值 0.5；阈值选择状态 <code>no_operating_point</code>（误报约束下无可行工作点）。</p>
+      <div class="verdict">
+        <span class="t">结论</span>
+        校准把概率标度修好了（ECE 下降、概率范围被拉开），但<b>造不出排序分离</b>——30min 概率仍挤在 [0.5, 0.6) 顶部扁平，maxp 只能到 ≈0.52。真正瓶颈是 30min 窗判别信息不足，由此启动 P1 与 P2。
+      </div>
+    </div>
+  </section>
+
+<!-- p1 -->
+  <section id="p1">
+    <h2><span class="tag t1">P1</span>预测器平替对照：换 Sundial 有效，但瓶颈不在它</h2>
+    <div class="card">
+      <h3>做了什么</h3>
+      <ul>
+        <li>三个 Apache-2.0 开源时序基础模型（<b>chronos2</b>：Amazon，TSMixer+稀疏 MoE；<b>TiRex</b>：微软 NX-AI，TSMixer 变体；<b>Lag-Llama</b>：Mila，Llama 解码器 + lags + Student-t）替换 Sundial 的 30min 预测环节。</li>
+        <li><b>只替换「未来特征预测器」</b>，下游 9 参数概率模型原样保留（每个预测器下按 P0 协议重训一次）；跳过索引与特征提取，复用 exp06 中间产物（6232 预测时刻 / 25 记录组 / 4287 样本）。</li>
+        <li>Lag-Llama 适配要点：past_len=1272（lag_pad+ctx）、future_time_feat 给满 187 步、单趟采样 <code>use_single_pass_sampling=True</code>（提速约 20 倍）、批量预填（BATCH=8）4258 条缓存落盘。</li>
+      </ul>
+      <h3>结果（30min，同一时间划分 + P0 协议）</h3>
+      <table>
+        <colgroup><col style="width:15%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:13%"></colgroup>
+        <thead><tr><th>方案</th><th class="num">验证 NLL</th><th class="num">验证 AP</th><th class="num">验证召回</th><th class="num">验证误报段</th><th class="num">测试 NLL</th><th class="num">测试 maxp</th><th class="num">测试 AP</th></tr></thead>
+        <tbody>
+          <tr><td>Sundial 基线(exp07)</td><td class="num">0.6914</td><td class="num hl">0.4340</td><td class="num">0.8</td><td class="num">5</td><td class="num">0.7129</td><td class="num">0.557</td><td class="num">0.3746</td></tr>
+          <tr><td>chronos2</td><td class="num">0.6924</td><td class="num">0.3905</td><td class="num">0.8</td><td class="num">4</td><td class="num">0.7024</td><td class="num">0.529</td><td class="num">0.4552</td></tr>
+          <tr><td>tirex</td><td class="num">0.6918</td><td class="num">0.3828</td><td class="num hl">1.0</td><td class="num">4</td><td class="num">0.7069</td><td class="num">0.526</td><td class="num">0.4909</td></tr>
+          <tr><td>lagllama</td><td class="num">0.6965</td><td class="num">0.3918</td><td class="num">0.6</td><td class="num">9</td><td class="num hl">0.6930</td><td class="num">0.539</td><td class="num best">0.5562</td></tr>
+        </tbody>
+      </table>
+      <div class="verdict g">
+        <span class="t">结论</span>
+        三方案<b>测试期 AP 全部显著超过基线</b>（lagllama +48%）、测试 NLL 也更优——平替成立，Sundial 环节确有改进空间；但验证期基线 AP 仍最高、lagllama 验证误报偏多，且 <b>maxp 仍压 ≈0.53</b>，标度问题是跨模型一致的系统性现象，指向 30min 窗信息瓶颈。
+      </div>
+    </div>
+  </section>
+
+<!-- p2 -->
+  <section id="p2">
+    <h2><span class="tag t2">P2</span>掩码重建预训练：用全部无标签波形抬信息上限</h2>
+    <div class="card">
+      <h3>做了什么</h3>
+      <ul>
+        <li>预训练：在 continuous.csv 全部 <b>18285 个 10s 特征块</b>（26 段、约 51 小时无标签波形，含全部正常时段）上训练 3 层 Transformer encoder（59.7 万参数，d=128）做<b>掩码重建</b>（80% 单点 + 20% 连续块掩码，MSE），50 epoch loss 7.33→1.66；特征取 8 维核心连续特征，log1p + z-score。</li>
+        <li>表征：对每个下游样本取其预测时刻前 30min 历史窗口（严格因果），encoder mean-pool 得 128 维；在<b>训练集</b>上 PCA 降 8 维并 z-score，拼接进原 x 前 6 列（sundial / lagllama 两个特征源各一套，14 维）。</li>
+        <li>微调：9 参数风险模型按 P0 协议重训（ridge×l1×link NLL 选参 + Platt + 三步阈值），同一时间划分。</li>
+      </ul>
+      <h3>结果（30min，同一时间划分 + P0 协议）</h3>
+      <table>
+        <colgroup><col style="width:15%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:13%"></colgroup>
+        <thead><tr><th>方案</th><th class="num">验证 NLL</th><th class="num">验证 maxp</th><th class="num">验证 AP</th><th class="num">验证误报段</th><th class="num">测试 NLL</th><th class="num">测试 maxp</th><th class="num">测试 AP</th></tr></thead>
+        <tbody>
+          <tr><td>Sundial 基线(exp07)</td><td class="num">0.6914</td><td class="num">0.544</td><td class="num">0.4340</td><td class="num">5</td><td class="num">0.7129</td><td class="num">0.557</td><td class="num">0.3746</td></tr>
+          <tr><td>P2 sundial+表征</td><td class="num">0.6908</td><td class="num">0.592</td><td class="num hl">0.4693</td><td class="num">16</td><td class="num">0.6941</td><td class="num hl">0.656</td><td class="num hl">0.5098</td></tr>
+          <tr><td>P2 lagllama+表征</td><td class="num">0.6958</td><td class="num hl">0.623</td><td class="num">0.4036</td><td class="num">12</td><td class="num best">0.6701</td><td class="num">0.654</td><td class="num best">0.5623</td></tr>
+        </tbody>
+      </table>
+      <p class="notes">两方案选参均为 logit / ridge=0.3 / l1=0.0；阈值 0.5；阈值选择状态 <code>no_operating_point</code>；验证/测试召回 0.8 / 1/3。</p>
+      <div class="verdict">
+        <span class="t">结论</span>
+        <b>测试 maxp 首次突破 0.53 瓶颈</b>：0.557 → P2 sundial 0.656（+18%）、P2 lagllama 0.654；测试 AP 0.5098（较基线 +36%）、P2 lagllama 0.5623（P1 最高再 +1%）；P2 lagllama 测试 NLL 0.6701 首次系统性低于 ln2≈0.693。P0/P1 都解不开的"概率挤中间"，被无标签波形学到的时序表征拉开了。
+      </div>
+      <div class="verdict w">
+        <span class="t">代价与未决</span>
+        验证集孤立误报段上升（sundial 5→16、lagllama 9→12）——概率拉开后更多窗口跨过 0.5，<b>误报管理成为新焦点</b>；测试 ECE 0.28 仍欠标定；预训练用全部无标签窗口（与报告口径一致，transductive），PCA/尺度统计只在训练集拟合。
+      </div>
+    </div>
+  </section>
+
+<!-- summary -->
+  <section id="compare">
+    <h2><span class="tag tm">汇总</span>四方案纵向对比</h2>
+    <div class="card">
+      <div id="ch1" class="chart"></div>
+      <p class="notes">测试集 30min AP 与最大概率；同一切分 + P0 协议；测试集 3 个可检事件，探索性。</p>
+      <div id="ch2" class="chart"></div>
+      <p class="notes">验证/测试 NLL 越低越好；ln2≈0.693 是"对真实标签平均 50% 把握"的贴底线。</p>
+      <h3>一句话主线</h3>
+      <p>P0 修标度 → P1 证预测器可换 → <b>P2 用无标签数据打开信息瓶颈</b>；但三个阶段的共同尾巴是"阈值规则在 2 段误报约束下永远选不到工作点"，需要在放开约束或降误报之间二选一。</p>
+    </div>
+  </section>
+
+<!-- limits -->
+  <section id="limits">
+    <h2><span class="tag tm">限制</span>结果边界</h2>
+    <div class="card">
+      <ul>
+        <li><b>测试集只有 3 个可检事件</b>，且多方案共享同一测试集——所有 AP/NLL 属探索性数字，不构成独立重复实验或已验证的现场性能。</li>
+        <li>预训练使用全部无标签窗口（transductive），PCA 与尺度统计只在训练集拟合；下游协议严格保持训练/验证/测试分离。</li>
+        <li>P2 表征维度（PCA 8 维）与窗口长度（30min）未经系统搜索；更大 encoder / 更长窗口可能进一步提升，属超参探索空间。</li>
+        <li>测试 ECE 偏高（0.28）与验证误报上升，说明表征拉开概率后校准与误报约束需要配套再调。</li>
+      </ul>
+    </div>
+  </section>
+
+<!-- next -->
+  <section id="next">
+    <h2><span class="tag tm">下一步</span>P3 前置条件与建议</h2>
+    <div class="card">
+      <h3>P3 · 微震分支与第二通道（长期）</h3>
+      <ul>
+        <li>前置：需要<b>外部微震识别结果</b>（当前无）——启用现有微震分支（24h 片段数量/强度/时间统计）、加入 b 值/能量指数物理特征、以 ETAS/Hawkes 事件率模型作第二通道与波形概率模型集成。</li>
+      </ul>
+      <h3>不依赖 P3 即可做的两项</h3>
+      <ul>
+        <li><b>重审误报约束</b>：验证集误报段中 boundary / post-event / isolated 的构成，判断 2 段限制是否过严；P2 概率已拉开，值得重新扫描工作点。</li>
+        <li><b>独立测试记录</b>：用新的记录子文件夹复核 P2 表征增益，摆脱共享测试集。</li>
+      </ul>
+    </div>
+  </section>
+
+<!-- artifacts -->
+  <section id="artifacts">
+    <h2><span class="tag tm">产物</span>交付物与仓库状态</h2>
+    <div class="card">
+      <table>
+        <colgroup><col style="width:34%"><col style="width:66%"></colgroup>
+        <thead><tr><th>位置</th><th>内容</th></tr></thead>
+        <tbody>
+          <tr><td><code>artifacts/experiment_07_calibrated/</code></td><td>P0：p0_summary.json / metrics.json / 校准前后预测明细</td></tr>
+          <tr><td><code>artifacts/experiment_08_p1/</code></td><td>P1：p1_summary.json；chronos2 / tirex / lagllama 各含 dataset/model/metrics/预测 CSV</td></tr>
+          <tr><td><code>artifacts/experiment_09_p2/</code></td><td>P2：p2_summary.json；sundial / lagllama 各含 dataset.npz / model.json / metrics.json / repr_pca.npy</td></tr>
+          <tr><td><code>_p0_*.py / _p1_*.py / _p2_*.py</code></td><td>三阶段脚本（仓库已跟踪）</td></tr>
+          <tr><td><code>README.md</code></td><td>第 13 节：P0/P1/P2 章节与结果表</td></tr>
+          <tr><td>git main</td><td>f397779（P0+P1 代码）→ c7b776f（README v1）→ 2d3d300（P2 脚本）</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="foot">
+    数据来源：p0_summary.json / p1_summary.json / p2_summary.json（均为脚本实算输出）；图表数据与正文表格同源。报告由 Doubao 生成，仅供项目内部决策参考。
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<script>
+(function(){
+  function mk(id,opt){var el=document.getElementById(id);if(!el||typeof echarts==='undefined'){return}var c=echarts.init(el);c.setOption(opt);}
+  var pal=['#5b8ff9','#c05326'];
+  mk('ch1',{
+    title:{text:'测试集 30min：AP 与最大概率（P2 前后）',left:8,textStyle:{fontSize:15,color:'#1c2733'}},
+    tooltip:{trigger:'axis',triggerOn:'click',renderMode:'richText',confine:true},
+    legend:{bottom:0},
+    grid:{left:56,right:20,top:40,bottom:52,containLabel:true},
+    xAxis:{type:'category',data:['exp07 基线','P1 lagllama','P2 sundial','P2 lagllama'],axisLabel:{color:'#37475a'}},
+    yAxis:{type:'value',min:0,max:0.7,name:'指标',nameTextStyle:{color:'#5b6b7a'},axisLabel:{color:'#5b6b7a'},splitLine:{lineStyle:{color:'#e3e7ec'}}},
+    series:[
+      {name:'测试 AP',type:'bar',data:[0.3746,0.5562,0.5098,0.5623],itemStyle:{color:'#5b8ff9'},label:{show:true,position:'top',formatter:function(p){return p.value.toFixed(3)},color:'#37475a'}},
+      {name:'测试 maxp',type:'bar',data:[0.5573,0.5387,0.6562,0.6543],itemStyle:{color:'#c05326'},label:{show:true,position:'top',formatter:function(p){return p.value.toFixed(3)},color:'#37475a'}}
+    ]
+  });
+  mk('ch2',{
+    title:{text:'NLL 对比（ln2≈0.693 为贴底线）',left:8,textStyle:{fontSize:15,color:'#1c2733'}},
+    tooltip:{trigger:'axis',triggerOn:'click',renderMode:'richText',confine:true},
+    legend:{bottom:0},
+    grid:{left:56,right:20,top:40,bottom:52,containLabel:true},
+    xAxis:{type:'category',data:['exp07 基线','P1 lagllama','P2 sundial','P2 lagllama'],axisLabel:{color:'#37475a'}},
+    yAxis:{type:'value',min:0.66,max:0.72,name:'NLL',nameTextStyle:{color:'#5b6b7a'},axisLabel:{color:'#5b6b7a'},splitLine:{lineStyle:{color:'#e3e7ec'}}},
+    series:[
+      {name:'验证 NLL',type:'bar',data:[0.6914,0.6965,0.6908,0.6958],itemStyle:{color:'#8fa9c4'}},
+      {name:'测试 NLL',type:'bar',data:[0.7129,0.6930,0.6941,0.6701],itemStyle:{color:'#1b7f8e'}}
+    ],
+    markLine:{silent:true,data:[{yAxis:0.693,lineStyle:{type:'dashed',color:'#b08a2e'}}]}
+  });
+})();
+</script>
+</body>
+</html>
+
+

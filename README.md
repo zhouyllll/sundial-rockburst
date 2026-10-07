@@ -424,6 +424,24 @@ python -m rockburst predict \
 
 脚本：`_p1_comparison.py`（主对照，进度写 `p1_run.log`）、`_p1_backends.py`（三后端适配）、`_p1_tirex_prefill.py` / `_p1_lagllama_prefill.py`（批量预填）、`_p1_smoke.py` / `_p1_smoke_lag.py`（冒烟）；`_p1_lagllama_src/` 是本地 Lag-Llama 官方建模（含 import 修复与自回归 future_time_feat 语义适配，`use_single_pass_sampling=True` 单趟采样提速约20倍）。
 
+### P2：掩码重建自监督预训练（experiment_09_p2，2026-10）
+
+动机：P0/P1 证明 maxp 始终压在 ≈0.53，瓶颈是 30min 窗判别信息不足；用全部无标签波形学表征来抬信息上限。
+
+方案：在 `continuous.csv` 全部 18285 个 10s 特征块（26 段，约 51 小时无标签波形）上训练 3 层 Transformer encoder（59.7 万参数，128 维）做掩码重建（80% 单点 + 20% 连续块掩码，MSE）；对每个下游样本取其预测时刻前 30min 历史窗口，mean-pool 得 128 维表征，在训练集上 PCA 降 8 维并 z-score，拼接进原 x 前 6 列（sundial / lagllama 两个特征源各一套），再以 P0 协议微调 9 参数风险模型。
+
+30min 指标（同一时间划分 + P0 协议）：
+
+| 方案 | 验证 NLL / maxp / AP / 误报段 | 测试 NLL / maxp / AP / 误报段 |
+|---|---|---|
+| Sundial 基线（exp07） | 0.6914 / 0.544 / 0.4340 / 5 | 0.7129 / 0.557 / 0.3746 / 4 |
+| P2 sundial+表征 | 0.6908 / 0.592 / 0.4693 / 16 | 0.6941 / **0.656** / 0.5098 / 6 |
+| P2 lagllama+表征 | 0.6958 / 0.623 / 0.4036 / 12 | **0.6701** / 0.654 / **0.5623** / 7 |
+
+结论：**测试 maxp 首次突破 0.53 瓶颈（0.557→0.656，+18%）**，测试 AP 较基线 +36%（0.5098），P2 lagllama 测试 NLL 0.6701 首次系统性低于 ln2；但验证集孤立误报段上升（sundial 5→16），阈值规则仍 `no_operating_point`（2 段限制过严），测试 ECE 0.28 仍欠标定。预训练用全部无标签窗口（与报告口径一致），PCA/尺度统计只在训练集拟合；测试集仅 3 个可检事件，属探索性。
+
+脚本：`_p2_pretrain.py`（掩码重建预训练）、`_p2_extract.py`（表征提取 + PCA + 数据集装配）、`_p2_finetune.py`（P0 协议微调，汇总 `p2_summary.json`）。
+
 ## 14. 配置与源码
 
 建议8～16核CPU、32～64GB内存、单张8～16GB显存GPU，或先用CPU。工作盘1TB SSD起步，按原始数据量扩充。无需多卡，小概率模型在CPU训练。
