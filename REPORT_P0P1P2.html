@@ -236,6 +236,35 @@ li{margin:5px 0}
     </div>
   </section>
 
+  <!-- p12 -->
+  <section id="p12">
+    <h2><span class="tag tm">P12</span>时序大模型预测集成（负面结论）</h2>
+    <div class="card">
+      <h3>做了什么</h3>
+      <ul>
+        <li>把 Sundial 与 P1 三源（chronos2 / tirex / lagllama）对<strong>同一目标序列</strong>的预测拼接（各源第 6 列 5/10/30min 预测均值），并可叠加「分歧」特征（各源预测极差 spread）；下游沿用 P0/P1 完全相同的协议（ridge×l1×link NLL 选参 + Platt 校准 + 阈值选择），重训 5 个变体（experiment_12_ensemble，N=4287，四源样本/标签逐项对齐）。</li>
+        <li>变体：<code>sundial_only</code>（同协议基线 6 维）/ <code>ens3</code>（Sundial+TiRex+Lag-Llama 拼接 8 维）/ <code>ens3_spread</code>（+分歧极差 9 维）/ <code>ens4</code>（四源 9 维）/ <code>ens4_spread</code>（10 维）。</li>
+        <li>本质：四源预测的是<strong>同一个 log1p(mean_square) 序列的走势</strong>——同构预测器，理论上只降方差、不补信息。</li>
+      </ul>
+      <h3>结果（30min，同一时间划分 + P0 协议）</h3>
+      <table>
+        <colgroup><col style="width:16%"><col style="width:8%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:12%"><col style="width:12%"></colgroup>
+        <thead><tr><th>变体</th><th class="num">特征</th><th class="num">验证 AP</th><th class="num">验证 NLL</th><th class="num">测试 AP</th><th class="num">测试 NLL</th><th class="num">测试误报段</th><th class="num">测试召回</th></tr></thead>
+        <tbody>
+          <tr><td>sundial_only</td><td class="num">6</td><td class="num hl">0.4340</td><td class="num">0.6914</td><td class="num">0.3746</td><td class="num">0.7129</td><td class="num">4</td><td class="num">0.33</td></tr>
+          <tr><td>ens3</td><td class="num">8</td><td class="num">0.3629</td><td class="num">0.6921</td><td class="num">0.3927</td><td class="num">0.7002</td><td class="num">3</td><td class="num">0.33</td></tr>
+          <tr><td>ens3_spread</td><td class="num">9</td><td class="num">0.3669</td><td class="num">0.6920</td><td class="num best">0.3934</td><td class="num">0.7010</td><td class="num">3</td><td class="num">0.33</td></tr>
+          <tr><td>ens4</td><td class="num">9</td><td class="num">0.3595</td><td class="num">0.6924</td><td class="num">0.3812</td><td class="num">0.6989</td><td class="num">3</td><td class="num">0.33</td></tr>
+          <tr><td>ens4_spread</td><td class="num">10</td><td class="num">0.3607</td><td class="num">0.6924</td><td class="num">0.3794</td><td class="num">0.6989</td><td class="num">3</td><td class="num">0.33</td></tr>
+        </tbody>
+      </table>
+      <div class="verdict r">
+        <span class="t">结论（负面）</span>
+        拼接在<strong>验证集 AP 明显下降</strong>（0.434→0.36），测试集 AP/NLL 仅微升（0.375→0.393、0.713→0.700）、孤立误报 4→3——但测试仅 3 个可检事件，差异属噪声；分歧（spread）特征几乎零增益（&lt;0.005 AP）。当前数据量下<strong>模型集成不成立，信息冗余而非互补，保持 Sundial 单源即可</strong>；与 P1 报告 Sundial 基线（exp07）逐项一致的 <code>sundial_only</code> 保证对照同协议成立。
+      </div>
+    </div>
+  </section>
+
 <!-- summary -->
   <section id="compare">
     <h2><span class="tag tm">汇总</span>P0/P1/P2 全方案纵向对比</h2>
