@@ -563,5 +563,5 @@ Demo 自检结果（artifacts/experiment_11_p3_validation/demo_out.json）：
 孤立误报 4→3，但测试仅 3 个可检事件，无统计意义；分歧（spread）特征几乎零增益（<0.005 AP）。
 即当前数据量下**模型集成不成立，信息冗余而非互补，保持 Sundial 单源即可**。
 
-> 口径注：`sundial_only` 为本实验同协议重跑基线，验证 AP 0.434 略低于 P0 报告的 0.499
-> （P0 采用细阈值网格重扫、min_active_bins=1 等不同口径），本次对照结论以同协议数字为准。
+> 口径注：`sundial_only` 与 P1 报告 Sundial 基线（exp07）逐项一致
+> （验证 AP 0.4340 / NLL 0.6914，测试 AP 0.3746 / NLL 0.7129），对照同协议成立。
